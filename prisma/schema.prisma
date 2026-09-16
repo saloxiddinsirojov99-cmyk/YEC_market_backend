@@ -1,0 +1,1066 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id                  String             @id @default(cuid())
+  name                String
+  email               String?            @unique
+  phone               String             @unique
+  password            String?
+  role                UserRole           @default(CUSTOMER)
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  avatar              String?
+  telegramChatId      String?            @unique
+  telegramUsername    String?            @unique
+  address             String?
+  lat                 Decimal?           @db.Decimal(10, 7)
+  lng                 Decimal?           @db.Decimal(10, 7)
+  registrationType    RegistrationType   @default(ONLINE)
+  birthDate           DateTime?
+  firstPurchaseDate   DateTime?
+  lastPurchaseDate    DateTime?
+  totalPurchaseAmount Decimal            @default(0) @db.Decimal(10, 2)
+  loyaltyPoints       Int                @default(0)
+  loyaltyStatus       LoyaltyStatus      @default(BRONZE)
+  carpetLikes         CarpetLike[]
+  courierOrders       Order[]            @relation("CourierOrders")
+  orders              Order[]            @relation("CustomerOrders")
+  promoCodeUsages     PromoCodeUsage[]
+  pushSubscriptions   PushSubscription[]
+  refreshTokens       RefreshToken[]
+  isCustomer          Boolean            @default(false)
+  customerId          String?
+  customerSource      CustomerSource?
+  notes               String?
+
+  @@map("users")
+}
+
+model OtpCode {
+  id              String     @id @default(cuid())
+  email           String
+  code            String
+  purpose         OtpPurpose
+  pendingName     String?
+  pendingPhone    String?
+  pendingPassword String?
+  expiresAt       DateTime
+  usedAt          DateTime?
+  createdAt       DateTime   @default(now())
+
+  @@index([email, purpose, createdAt])
+  @@map("otp_codes")
+}
+
+model Category {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  soldCount Int      @default(0)
+  image     String?
+  carpets   Carpet[]
+
+  @@map("categories")
+}
+
+model Carpet {
+  id              String      @id @default(cuid())
+  uniqueCode      String      @unique
+  name            String
+  patternCode     String
+  productType     ProductType
+  shape           Shape
+  price           Decimal     @default(0) @db.Decimal(10, 2)
+  material        String      @default("")
+  description     String?
+  images          String[]    @default([])
+  categoryId      String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  likes           Int         @default(0)
+  discountPercent Int         @default(0)
+  designCode      String?
+  qo_shimchaKod   BigInt?     @unique
+  isArchived      Boolean     @default(false)
+  brand           String?
+  type            CarpetType  @default(READY)
+  weightKg        Decimal?    @db.Decimal(10, 2)
+  pileHeight      Int?
+
+  // AI Attributes
+  tenantId       String?
+  dominantColor  String?
+  patternType    String?
+  style          String?
+  priceSegment   String?
+  clickCount     Int     @default(0)
+  viewCount      Int     @default(0)
+  purchaseCount  Int     @default(0)
+  addToCartCount Int     @default(0)
+  wishlistCount  Int     @default(0)
+  conversionRate Decimal @default(0) @db.Decimal(5, 2)
+  returnRate     Decimal @default(0) @db.Decimal(5, 2)
+
+  likedBy          CarpetLike[]
+  category         Category?         @relation(fields: [categoryId], references: [id])
+  orderItems       OrderItem[]
+  rollInventories  RollInventory[]
+  inventoryLedgers InventoryLedger[]
+  inventoryItems   InventoryItem[]
+
+  catalogDesignId String?
+  imageSnapshot   String?
+  catalogDesign   CatalogDesign? @relation(fields: [catalogDesignId], references: [id], onDelete: SetNull)
+
+  @@index([categoryId])
+  @@index([createdAt])
+  @@index([isArchived])
+  @@index([catalogDesignId])
+  @@map("carpets")
+}
+
+model Order {
+  id                    String               @id @default(cuid())
+  customerId            String
+  customerName          String
+  phone                 String
+  address               String
+  comment               String?
+  status                OrderStatus          @default(PENDING)
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+  cancelReason          String?
+  locationLat           Decimal?             @db.Decimal(10, 7)
+  locationLng           Decimal?             @db.Decimal(10, 7)
+  locationText          String?
+  paymentMethod         PaymentMethod        @default(CASH)
+  phone2                String?
+  deliveryDate          DateTime?
+  appliedPromoCode      String?
+  appliedPromoGiftImage String?
+  appliedPromoGiftName  String?
+  appliedPromoGiftPrice Int?
+  appliedPromoPercent   Int                  @default(0)
+  appliedPromoType      PromoCodeType?
+  courierId             String?
+  courierName           String?
+  courierPhone          String?
+  cancelledAt           DateTime?
+  cancelledBy           String?
+  depositAmount         Decimal?             @db.Decimal(10, 2)
+  depositPercent        Int?
+  depositPaidAt         DateTime?
+  depositPaymentMethod  String?
+  depositTransactionId  String?
+  returnDeadline        DateTime?
+  version               Int                  @default(0)
+  courierProofType      String?
+  courierProofData      String?
+  courierProofSignature String?
+  paidAmount            Decimal              @default(0) @db.Decimal(10, 2)
+  paymentPaidAt         DateTime?
+  paymentStatus         PaymentStatus        @default(UNPAID)
+  remainingAmount       Decimal              @default(0) @db.Decimal(10, 2)
+  deliveryCompletedAt   DateTime?
+  termsAccepted         Boolean              @default(false)
+  termsAcceptedAt       DateTime?
+  items                 OrderItem[]
+  courier               User?                @relation("CourierOrders", fields: [courierId], references: [id])
+  customer              User                 @relation("CustomerOrders", fields: [customerId], references: [id])
+  promoCodeUsage        PromoCodeUsage?
+  returnRequest         ReturnRequest?
+  paymentHistories      PaymentHistory[]
+  paymentTransactions   PaymentTransaction[]
+
+  @@index([status])
+  @@index([createdAt])
+  @@index([customerId])
+  @@index([courierId])
+  @@map("orders")
+}
+
+model CarpetLike {
+  id        String   @id @default(cuid())
+  userId    String
+  carpetId  String
+  createdAt DateTime @default(now())
+  carpet    Carpet   @relation(fields: [carpetId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, carpetId])
+  @@map("carpet_likes")
+}
+
+model OrderItem {
+  id        String   @id @default(cuid())
+  orderId   String
+  carpetId  String?
+  quantity  Int
+  price     Decimal  @db.Decimal(10, 2)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  pricePerM2                 Decimal? @db.Decimal(10, 2)
+  selectedArea               Decimal? @db.Decimal(10, 2)
+  selectedWidthCm            Int?
+  selectedLengthCm           Int?
+  isReturnedInventoryCreated Boolean  @default(false)
+
+  carpetName    String?
+  carpetImage   String?
+  carpetBarcode String?
+
+  inventoryAllocations OrderItemInventory[]
+  rollAllocation       OrderItemRoll?
+  carpet               Carpet?              @relation(fields: [carpetId], references: [id])
+  order                Order                @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([carpetId])
+  @@map("order_items")
+}
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("push_subscriptions")
+}
+
+model PromoCode {
+  id              String           @id @default(cuid())
+  code            String           @unique
+  discountPercent Int
+  type            PromoCodeType    @default(DISCOUNT)
+  minOrderAmount  Int              @default(0)
+  isActive        Boolean          @default(true)
+  startsAt        DateTime?
+  expiresAt       DateTime?
+  giftName        String?
+  giftImage       String?
+  giftPrice       Int?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  usages          PromoCodeUsage[]
+
+  @@index([code])
+  @@index([isActive])
+  @@map("promo_codes")
+}
+
+model PromoCodeUsage {
+  id          String    @id @default(cuid())
+  promoCodeId String
+  userId      String
+  orderId     String    @unique
+  usedAt      DateTime  @default(now())
+  order       Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  promoCode   PromoCode @relation(fields: [promoCodeId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([promoCodeId, userId])
+  @@index([promoCodeId])
+  @@index([userId])
+  @@map("promo_code_usages")
+}
+
+model OrderItemInventory {
+  id          String        @id @default(cuid())
+  orderItemId String
+  inventoryId String
+  createdAt   DateTime      @default(now())
+  inventory   InventoryItem @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+  orderItem   OrderItem     @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+
+  @@unique([orderItemId, inventoryId])
+  @@index([orderItemId])
+  @@index([inventoryId])
+  @@map("order_item_inventories")
+}
+
+model InventoryHistory {
+  id          String          @id @default(cuid())
+  inventoryId String
+  oldStatus   InventoryStatus
+  newStatus   InventoryStatus
+  reason      String?
+  orderId     String?
+  createdAt   DateTime        @default(now())
+  inventory   InventoryItem   @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+
+  @@index([inventoryId])
+  @@index([createdAt])
+  @@map("inventory_histories")
+}
+
+model ImportLog {
+  id                   String       @id @default(cuid())
+  fileName             String
+  userName             String
+  userEmail            String
+  totalRows            Int
+  details              Json?
+  createdAt            DateTime     @default(now())
+  fileHash             String?
+  userId               String?
+  importType           String
+  startedAt            DateTime
+  finishedAt           DateTime?
+  durationMs           Int?
+  successCount         Int          @default(0)
+  duplicateCount       Int          @default(0)
+  noImageCount         Int          @default(0)
+  validationErrorCount Int          @default(0)
+  failedCount          Int          @default(0)
+  errorFilePath        String?
+  ip                   String?
+  browser              String?
+  version              String?
+  status               ImportStatus @default(SUCCESS)
+
+  @@index([createdAt])
+  @@map("import_logs")
+}
+
+model RollInventory {
+  id               String          @id @default(cuid())
+  carpetId         String
+  widthCm          Int
+  originalLengthCm Int
+  currentLengthCm  Int
+  reservedLengthCm Int             @default(0)
+  pricePerM2       Decimal         @db.Decimal(10, 2)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  allocations      OrderItemRoll[]
+  carpet           Carpet          @relation(fields: [carpetId], references: [id], onDelete: Cascade)
+
+  @@unique([carpetId, widthCm])
+  @@map("roll_inventories")
+}
+
+model OrderItemRoll {
+  id              String               @id @default(cuid())
+  orderItemId     String               @unique
+  rollInventoryId String
+  lengthCm        Int
+  widthCm         Int
+  status          RollAllocationStatus @default(RESERVED)
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  orderItem       OrderItem            @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  rollInventory   RollInventory        @relation(fields: [rollInventoryId], references: [id], onDelete: Cascade)
+
+  @@map("order_item_rolls")
+}
+
+model ReturnRequest {
+  id            String              @id @default(cuid())
+  orderId       String              @unique
+  reason        String
+  explanation   String
+  images        String[]            @default([])
+  status        ReturnRequestStatus @default(RETURN_REQUESTED)
+  deliveryCost  Decimal?            @db.Decimal(10, 2)
+  refundAmount  Decimal?            @db.Decimal(10, 2)
+  penaltyAmount Decimal?            @db.Decimal(10, 2)
+  penaltyReason String?
+  version       Int                 @default(0)
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  deletedAt     DateTime?
+  order         Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("return_requests")
+}
+
+enum CustomerSource {
+  OFFLINE
+  WEBSITE
+  BOTH
+}
+
+enum UserRole {
+  SUPERADMIN
+  ADMIN
+  CUSTOMER
+  SELLER
+  COURIER
+  OPERATOR
+}
+
+enum OrderStatus {
+  PENDING
+  ACCEPTED
+  CUTTING
+  READY_FOR_DELIVERY
+  ON_WAY
+  DELIVERED
+  COMPLETED
+  CANCELLED
+  CANCEL_REQUESTED
+  RETURN_REQUESTED
+  RETURN_APPROVED
+  RETURN_REJECTED
+  REFUNDED
+}
+
+enum PromoCodeType {
+  DISCOUNT
+  GIFT
+}
+
+enum PaymentStatus {
+  UNPAID
+  DEPOSIT_REQUIRED
+  PAYMENT_PENDING
+  PARTIALLY_PAID
+  FULLY_PAID
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  CLICK
+  PAYME
+}
+
+enum OtpPurpose {
+  REGISTER
+  FORGOT_PASSWORD
+}
+
+enum ImportStatus {
+  SUCCESS
+  PARTIAL
+  FAILED
+}
+
+enum InventoryStatus {
+  AVAILABLE
+  RESERVED
+  SOLD
+}
+
+enum CarpetType {
+  READY
+  ROLL
+  RETURN_ROLL
+  RETURN_READY
+}
+
+enum ProductType {
+  METRAJ
+  RUNNER
+  READY
+}
+
+enum Shape {
+  RECTANGLE
+  OVAL
+  CIRCLE
+}
+
+enum RollAllocationStatus {
+  AVAILABLE
+  RESERVED
+  CUTTING
+  CUT
+  DELIVERED
+  RETURNED
+  RESTOCKED
+  DISCARDED
+}
+
+enum ReturnRequestStatus {
+  RETURN_REQUESTED
+  RETURN_UNDER_REVIEW
+  RETURN_APPROVED
+  RETURN_REJECTED
+  RETURN_COMPLETED
+}
+
+enum RegistrationType {
+  ONLINE
+  OFFLINE
+}
+
+enum LoyaltyStatus {
+  BRONZE
+  SILVER
+  GOLD
+}
+
+model CarpetName {
+  id         String   @id @default(cuid())
+  name       String   @unique
+  designCode String
+  images     String[] @default([])
+  categoryId String?
+  material   String?
+  brand      String?
+  pricePerM2 Decimal? @db.Decimal(10, 2)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("carpet_names")
+}
+
+enum DeliveryScheduleStatus {
+  AVAILABLE
+  FULL
+  CLOSED
+}
+
+model DeliverySchedule {
+  id             String                 @id @default(cuid())
+  dateString     String                 @unique // Format: YYYY-MM-DD
+  capacity       Int
+  reservedOrders Int                    @default(0)
+  availableSlots Int
+  status         DeliveryScheduleStatus @default(AVAILABLE)
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+
+  @@map("delivery_schedules")
+}
+
+model RefreshToken {
+  id         String    @id
+  tokenHash  String    @unique
+  userId     String
+  deviceId   String    @default(cuid())
+  createdAt  DateTime  @default(now())
+  expiresAt  DateTime
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model AuditLog {
+  id        String    @id @default(cuid())
+  action    String
+  who       String
+  when      DateTime  @default(now())
+  ip        String?
+  oldValue  String?   @db.Text
+  newValue  String?   @db.Text
+  reason    String?   @db.Text
+  orderId   String?
+  deletedAt DateTime?
+
+  @@index([orderId])
+  @@index([action])
+  @@index([when])
+  @@map("audit_logs")
+}
+
+model PaymentHistory {
+  id            String    @id @default(cuid())
+  orderId       String
+  paymentType   String // DEPOSIT | FINAL | REFUND
+  gateway       String // CLICK | PAYME
+  transactionId String
+  amount        Decimal   @db.Decimal(10, 2)
+  status        String // PENDING | SUCCESS | FAILED
+  createdAt     DateTime  @default(now())
+  deletedAt     DateTime?
+  order         Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([transactionId])
+  @@index([createdAt])
+  @@map("payment_histories")
+}
+
+model InventoryLedger {
+  id        String    @id @default(cuid())
+  carpetId  String
+  quantity  Int // Positive for stock increments, negative for decrements
+  action    String // ORDER_CREATED | PURCHASE_CANCELLED | REFUND | MANUAL_ADJUSTMENT
+  reason    String?   @db.Text
+  actor     String // userId or 'SYSTEM'
+  createdAt DateTime  @default(now())
+  deletedAt DateTime?
+  carpet    Carpet    @relation(fields: [carpetId], references: [id], onDelete: Cascade)
+
+  @@index([carpetId])
+  @@index([createdAt])
+  @@map("inventory_ledgers")
+}
+
+model RollAllocationHistory {
+  id              String    @id @default(cuid())
+  rollInventoryId String
+  orderId         String
+  lengthCm        Int
+  action          String // RESERVED | RESTOCKED | RETURNED | DISCARDED
+  actor           String
+  createdAt       DateTime  @default(now())
+  deletedAt       DateTime?
+
+  @@index([rollInventoryId])
+  @@index([orderId])
+  @@index([createdAt])
+  @@map("roll_allocation_histories")
+}
+
+model NotificationTemplate {
+  id        String   @id @default(cuid())
+  key       String   @unique // e.g. 'telegram/order-created'
+  subject   String?
+  body      String   @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("notification_templates")
+}
+
+model NotificationQueue {
+  id          String   @id @default(cuid())
+  channel     String // TELEGRAM, SMS, EMAIL, SITE
+  recipient   String
+  message     String   @db.Text
+  status      String   @default("PENDING") // PENDING, SENT, FAILED
+  attempts    Int      @default(0)
+  nextRetryAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status])
+  @@index([nextRetryAt])
+  @@map("notification_queue")
+}
+
+model FeatureFlag {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  isEnabled   Boolean  @default(true)
+  description String?
+  updatedAt   DateTime @updatedAt
+
+  @@map("feature_flags")
+}
+
+enum CarpetInventoryStatus {
+  ACTIVE
+  RESERVED
+  PICKED
+  SOLD
+  RETURNED
+  ARCHIVED
+  DAMAGED
+  LOST
+  HOLD
+  IN_TRANSIT
+  CUTTING
+  READY_FOR_PICKUP
+  QUALITY_CHECK
+  RETURN_PENDING
+}
+
+model InventoryItem {
+  id                String                @id @default(cuid())
+  carpetId          String
+  tenantId          String?
+  barcode           String                @unique
+  sku               String                @unique
+  widthMm           Int
+  lengthMm          Int
+  size              String
+  pricePerM2        Decimal?              @db.Decimal(10, 2)
+  piecePrice        Decimal?              @db.Decimal(10, 2)
+  selectedArea      Decimal?              @db.Decimal(10, 4)
+  isReturned        Boolean               @default(false)
+  returnRequestId   String?               @unique
+  returnGeneration  Int                   @default(0)
+  inventorySource   String                @default("NEW") // NEW | RETURN | IMPORT | MANUAL
+  sourceOrderId     String?
+  sourceOrderItemId String?
+  returnCreatedAt   DateTime?
+  inventoryStatus   CarpetInventoryStatus @default(ACTIVE)
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+
+  carpet      Carpet               @relation(fields: [carpetId], references: [id])
+  allocations OrderItemInventory[]
+  history     InventoryHistory[]
+
+  @@index([carpetId])
+  @@index([sku])
+  @@index([barcode])
+  @@map("inventory_items")
+}
+
+enum CatalogProductType {
+  READY
+  ROLL
+}
+
+model CatalogDesign {
+  id               String             @id @default(cuid())
+  collectionName   String
+  collectionSlug   String
+  collectionUrl    String
+  productType      CatalogProductType
+  designCode       String // Normalized, e.g. L100A
+  patternCode      String?
+  image            String // WebP file URL e.g. /uploads/catalog/steffano_static_L100A.webp
+  originalImageUrl String // original crawled image source URL
+  pageUrl          String // collection page URL
+  gallery          String[]           @default([])
+  metadata         Json? // stores colors, sizes, brand, pile, origin, material, shape
+
+  // Hash & Integrity Fields
+  imageHash       String // SHA256 checksum
+  imageSize       Int
+  imageWidth      Int?
+  imageHeight     Int?
+  mimeType        String?
+  storageProvider String  @default("LOCAL")
+
+  // Soft Delete and Run Identifiers
+  isActive      Boolean   @default(true)
+  isManualImage Boolean   @default(false)
+  syncBatchId   String?
+  lastSeenAt    DateTime?
+  lastSynced    DateTime  @default(now()) @updatedAt
+
+  // AI & Visual Similarity Fields
+  phash            String?
+  histogram        Json?
+  edges            Json?
+  clipEmbedding    Json?
+  transparentImage String? // Background removed image URL
+  transparentReady Boolean @default(false)
+
+  carpets     Carpet[]
+  aiEmbedding AiEmbedding?
+
+  @@unique([collectionSlug, designCode, productType])
+  @@index([designCode])
+  @@index([productType])
+  @@index([collectionSlug])
+  @@index([isActive])
+  @@map("catalog_designs")
+}
+
+model CatalogSyncLock {
+  id        String    @id @default("singleton")
+  running   Boolean   @default(false)
+  startedAt DateTime?
+  workerId  String?
+
+  @@map("catalog_sync_locks")
+}
+
+model CatalogSyncHistory {
+  id                   String             @id @default(cuid())
+  startedAt            DateTime           @default(now())
+  finishedAt           DateTime?
+  durationMs           Int?
+  collectionsScanned   Int                @default(0)
+  downloadedCount      Int                @default(0)
+  updatedCount         Int                @default(0)
+  failedCount          Int                @default(0)
+  skippedCount         Int                @default(0)
+  brokenCount          Int                @default(0)
+  processedCollections String[]           @default([]) // Checkpoint tracker
+  operator             String
+  status               String // RUNNING | CANCELLED | SUCCESS | FAILED
+  error                String?            @db.Text
+  syncBatchId          String             @unique
+  events               CatalogSyncEvent[]
+
+  @@map("catalog_sync_histories")
+}
+
+model CatalogSyncEvent {
+  id            String             @id @default(cuid())
+  syncHistoryId String
+  eventType     String // INFO | WARNING | ERROR
+  message       String             @db.Text
+  timestamp     DateTime           @default(now())
+  history       CatalogSyncHistory @relation(fields: [syncHistoryId], references: [id], onDelete: Cascade)
+
+  @@index([syncHistoryId])
+  @@map("catalog_sync_events")
+}
+
+model AiSettings {
+  id               String   @id @default("singleton")
+  provider         String   @default("OPENAI") // OPENAI | GEMINI | OPENROUTER | ANTHROPIC
+  apiKey           String?  @db.Text
+  imageQuality     String   @default("standard")
+  maxResolution    Int      @default(2048)
+  dailyGuestLimit  Int      @default(0) // Guest limit (0 = blocked)
+  dailyUserLimit   Int      @default(5) // Registered user daily limit
+  dailyVipLimit    Int      @default(20) // VIP daily limit
+  monthlyBudgetUsd Decimal? @db.Decimal(10, 2)
+  aiEnabled        Boolean  @default(true)
+  updatedAt        DateTime @updatedAt
+
+  @@map("ai_settings")
+}
+
+model AiRoomPreview {
+  id             String   @id @default(cuid())
+  userId         String?
+  carpetId       String?
+  roomImage      String // Original uploaded room photo
+  generatedImage String? // Generated room preview WebP URL
+  roomWidth      Float // Entered room width (meters)
+  roomLength     Float // Entered room length (meters)
+  status         String   @default("QUEUED") // QUEUED | PROCESSING | COMPLETED | FAILED | CACHED
+  errorMessage   String?  @db.Text
+  cacheKey       String?  @unique // SHA256 of parameters for caching
+  rating         Int? // Feedback loop rating (1-5 stars)
+  isHelpful      Boolean? // Feedback loop helpful check (true/false)
+  createdAt      DateTime @default(now())
+
+  @@index([userId])
+  @@index([cacheKey])
+  @@map("ai_room_previews")
+}
+
+model UserPreference {
+  id              String   @id @default(cuid())
+  userId          String?  @unique // null for anonymous guests (stored in cookie/localStorage)
+  preferredColors String[] @default([])
+  preferredSizes  String[] @default([])
+  preferredStyles String[] @default([])
+  updatedAt       DateTime @updatedAt
+
+  @@map("user_preferences")
+}
+
+model AiEmbedding {
+  id              String        @id @default(cuid())
+  catalogDesignId String        @unique
+  clipVector      Json? // Array of floats
+  updatedAt       DateTime      @updatedAt
+  catalogDesign   CatalogDesign @relation(fields: [catalogDesignId], references: [id], onDelete: Cascade)
+
+  @@map("ai_embeddings")
+}
+
+model AiSearchLog {
+  id        String   @id @default(cuid())
+  image     String? // search query image path/url
+  results   Json? // serialized list of matched design codes / match percents
+  time      Int // execution time in milliseconds
+  user      String? // username or userId or role info
+  createdAt DateTime @default(now())
+
+  @@map("ai_search_logs")
+}
+
+model AiAssistantLog {
+  id        String   @id @default(cuid())
+  question  String   @db.Text
+  answer    String   @db.Text
+  tokens    Int      @default(0)
+  cost      Decimal  @default(0) @db.Decimal(10, 5)
+  provider  String
+  createdAt DateTime @default(now())
+
+  @@map("ai_assistant_logs")
+}
+
+model RecommendationSettings {
+  id               String @id @default("singleton")
+  roomWeight       Float  @default(0.35)
+  clearanceWeight  Float  @default(0.25)
+  colorWeight      Float  @default(0.15)
+  styleWeight      Float  @default(0.10)
+  fifoWeight       Float  @default(0.10)
+  popularityWeight Float  @default(0.05)
+
+  // Deposit calculation configurations
+  minDeposit         Decimal @default(100000) @db.Decimal(10, 2)
+  maxDeposit         Decimal @default(2000000) @db.Decimal(10, 2)
+  loyalDiscountTier1 Float   @default(5.0)
+  loyalDiscountTier2 Float   @default(5.0)
+  loyalCountTier1    Int     @default(3)
+  loyalCountTier2    Int     @default(10)
+
+  updatedAt DateTime @updatedAt
+
+  @@map("recommendation_settings")
+}
+
+model DepositTier {
+  id        String   @id @default(cuid())
+  minAmount Decimal  @db.Decimal(10, 2)
+  maxAmount Decimal  @db.Decimal(10, 2)
+  percent   Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("deposit_tiers")
+}
+
+model PaymentTransaction {
+  id               String    @id @default(cuid())
+  orderId          String
+  provider         String // CLICK | PAYME
+  transactionId    String    @unique
+  amount           Decimal   @db.Decimal(10, 2)
+  status           String // PENDING | SUCCESS | FAILED | EXPIRED | CANCELLED | TIMEOUT
+  paymentType      String // DEPOSIT | FINAL_PAYMENT | REFUND
+  currency         String    @default("UZS")
+  requestPayload   Json?
+  providerResponse Json?
+  paidAt           DateTime?
+  failureReason    String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([provider, transactionId])
+  @@map("payment_transactions")
+}
+
+model AiSearchHistory {
+  id        String   @id @default(cuid())
+  userId    String?
+  query     String   @db.Text
+  filters   Json?
+  createdAt DateTime @default(now())
+
+  @@map("ai_search_histories")
+}
+
+model AiFeedback {
+  id         String   @id @default(cuid())
+  userId     String?
+  targetId   String // ID of preview or recommendation
+  targetType String // PREVIEW | RECOMMENDATION
+  isHelpful  Boolean?
+  rating     Int? // 1-5 stars
+  comment    String?  @db.Text
+  createdAt  DateTime @default(now())
+
+  @@map("ai_feedbacks")
+}
+
+model AiPrompt {
+  id           String   @id @default(cuid())
+  version      String // e.g. "v1"
+  provider     String // OPENAI | GEMINI | etc.
+  systemPrompt String   @db.Text
+  enabled      Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  @@map("ai_prompts")
+}
+
+model AiUsage {
+  id         String   @id @default(cuid())
+  userId     String?
+  feature    String // PREVIEW | SEARCH | ASSISTANT | STYLE_DETECTION
+  provider   String
+  tokensUsed Int      @default(0)
+  costUsd    Decimal  @db.Decimal(10, 5)
+  createdAt  DateTime @default(now())
+
+  @@map("ai_usage_records")
+}
+
+model AiAnalytics {
+  id          String   @id @default(cuid())
+  metricName  String // e.g. "most_searched_color"
+  metricValue String // e.g. "cream"
+  dimensions  Json? // e.g. { category: "carpet" }
+  createdAt   DateTime @default(now())
+
+  @@map("ai_analytics")
+}
+
+model AiCache {
+  id        String   @id @default(cuid())
+  cacheKey  String   @unique
+  value     String   @db.Text
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@map("ai_caches")
+}
+
+model AiSimilarity {
+  id        String   @id @default(cuid())
+  sourceId  String
+  targetId  String
+  score     Float
+  updatedAt DateTime @updatedAt
+
+  @@map("ai_similarities")
+}
+
+model AiJob {
+  id        String   @id @default(cuid())
+  queueName String
+  status    String // QUEUED | PROCESSING | COMPLETED | FAILED
+  priority  Int      @default(0)
+  payload   Json?
+  result    Json?
+  createdAt DateTime @default(now())
+
+  @@map("ai_jobs")
+}
+
+model AiQuota {
+  id        String   @id @default(cuid())
+  userId    String?  @unique
+  role      String // GUEST | USER | VIP
+  limit     Int
+  used      Int      @default(0)
+  resetAt   DateTime
+  createdAt DateTime @default(now())
+
+  @@map("ai_quotas")
+}
+
+model AiFeatureFlag {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  isEnabled   Boolean  @default(true)
+  description String?
+  updatedAt   DateTime @updatedAt
+
+  @@map("ai_feature_flags")
+}
+
+model AiRecommendationLog {
+  id             String   @id @default(cuid())
+  userId         String?
+  roomWidth      Float
+  roomLength     Float
+  selectedSize   String?
+  detectedStyle  String?
+  detectedColors String[] @default([])
+  createdAt      DateTime @default(now())
+
+  @@map("ai_recommendation_logs")
+}

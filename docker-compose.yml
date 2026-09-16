@@ -1,0 +1,42 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: yec_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: yec_tashkent
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  api:
+    build: .
+    container_name: yec_api
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      - postgres
+    volumes:
+      - ./uploads:/app/uploads
+    ports:
+      - '3001:3001'
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: yec_nginx
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - '80:80'
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+
+volumes:
+  postgres_data:
