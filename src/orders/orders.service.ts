@@ -138,6 +138,11 @@ export class OrdersService implements OnModuleInit {
   async onModuleInit() {
     setImmediate(async () => {
       try {
+        const isDbUp = await this.prisma.verifyConnection();
+        if (!isDbUp) {
+          return;
+        }
+
         // 1. Repair legacy ROLL items that don't have new dimensions/prices persisted
         const legacyItems = await this.prisma.orderItem.findMany({
           where: {

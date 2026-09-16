@@ -10,6 +10,13 @@ export class DefaultSuperAdminService implements OnModuleInit {
   constructor(private readonly prisma: PrismaService) {}
 
   async onModuleInit(): Promise<void> {
+    const isDbUp = await this.prisma.verifyConnection();
+    if (!isDbUp) {
+      this.logger.warn(
+        'Database ulanishi mavjud emas. Default superadmin tekshiruvi keyinroqqa qoldirildi.',
+      );
+      return;
+    }
     await this.ensureDefaultSuperAdmin();
   }
 

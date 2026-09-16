@@ -334,6 +334,10 @@ export class CarpetsService implements OnModuleInit {
   async onModuleInit() {
     setImmediate(async () => {
       try {
+        const isDbUp = await this.prisma.verifyConnection();
+        if (!isDbUp) {
+          return;
+        }
         await this.prisma.$executeRaw`
           UPDATE "carpets" c
           SET "likes" = (
@@ -341,7 +345,10 @@ export class CarpetsService implements OnModuleInit {
           );
         `;
       } catch (error) {
-        console.error('Error in CarpetsService.onModuleInit:', error);
+        console.warn(
+          'CarpetsService.onModuleInit ogohlantirish:',
+          error instanceof Error ? error.message : error,
+        );
       }
     });
   }

@@ -30,19 +30,43 @@ export class AppController {
   @Public()
   @Get('api/health')
   async apiHealth() {
-    let databaseStatus = 'unknown';
+    let databaseStatus = 'down';
+    let dbErrorMsg: string | undefined;
+
     try {
       await this.prisma.$queryRaw`SELECT 1`;
       databaseStatus = 'up';
-    } catch {
+    } catch (err: any) {
       databaseStatus = 'down';
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('ECONNREFUSED')) {
+        dbErrorMsg = 'ECONNREFUSED: Server portiga ulanish rad etildi (host/port noto\'g\'ri yoki server ishlamayapti).';
+      } else if (msg.includes('ENOTFOUND')) {
+        dbErrorMsg = 'ENOTFOUND: Database host manzili topilmadi (DNS xatosi).';
+      } else if (msg.includes('ETIMEDOUT')) {
+        dbErrorMsg = 'ETIMEDOUT: Database so\'rovi vaqti tugadi.';
+      } else {
+        dbErrorMsg = 'Database ulanishida xatolik yuz berdi.';
+      }
     }
 
-    return {
-      status: 'ok',
+    const safeInfo = this.prisma.getSafeDbInfo();
+    const isHealthy = databaseStatus === 'up';
+
+    const payload = {
+      status: isHealthy ? 'ok' : 'degraded',
+      api: 'up',
       database: databaseStatus,
+      dbInfo: safeInfo,
+      ...(dbErrorMsg && !isHealthy ? { message: dbErrorMsg } : {}),
       timestamp: new Date().toISOString(),
     };
+
+    if (!isHealthy) {
+      throw new ServiceUnavailableException(payload);
+    }
+
+    return payload;
   }
 
   @Public()

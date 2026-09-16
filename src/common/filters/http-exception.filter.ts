@@ -28,8 +28,11 @@ export class HttpExceptionFilter implements ExceptionFilter {
       status = HttpStatus.BAD_REQUEST;
       message = "So'rov ma'lumotlari formatida xatolik bor.";
     } else if (exception instanceof Prisma.PrismaClientInitializationError) {
-      status = HttpStatus.INTERNAL_SERVER_ERROR;
+      status = HttpStatus.SERVICE_UNAVAILABLE;
       message = "Ma'lumotlar bazasiga ulanishda xatolik yuz berdi.";
+    } else if (exception instanceof Prisma.PrismaClientRustPanicError) {
+      status = HttpStatus.INTERNAL_SERVER_ERROR;
+      message = "Ma'lumotlar bazasi tizimida kutilmagan xatolik.";
     } else if (exception instanceof MulterError) {
       status = HttpStatus.BAD_REQUEST;
       message = this.mapMulterError(exception.code);
@@ -63,8 +66,20 @@ export class HttpExceptionFilter implements ExceptionFilter {
         customExtraProps = extra;
       }
     } else if (exception instanceof Error) {
-      message = this.translateMessage(exception.message);
-      this.logger.error(`Error: ${exception.message}`, exception.stack);
+      const lower = exception.message.toLowerCase();
+      if (
+        lower.includes('econnrefused') ||
+        lower.includes('connection refused') ||
+        lower.includes('connection terminated') ||
+        lower.includes('etimedout') ||
+        lower.includes('enotfound')
+      ) {
+        status = HttpStatus.SERVICE_UNAVAILABLE;
+        message = "Ma'lumotlar bazasiga ulanib bo'lmadi. Iltimos, birozdan so'ng qayta urinib ko'ring.";
+      } else {
+        message = this.translateMessage(exception.message);
+      }
+      this.logger.error(`Error [${status}]: ${exception.message}`, exception.stack);
     } else {
       this.logger.error('Kutilmagan xatolik:', String(exception));
     }
@@ -103,6 +118,39 @@ export class HttpExceptionFilter implements ExceptionFilter {
     status: number;
     message: string;
   } {
+    // Connection / Server errors
+    if (code === 'P1000') {
+      return {
+        status: HttpStatus.SERVICE_UNAVAILABLE,
+        message: "Ma'lumotlar bazasiga ulanishda autentifikatsiya xatosi yuz berdi.",
+      };
+    }
+    if (code === 'P1001') {
+      return {
+        status: HttpStatus.SERVICE_UNAVAILABLE,
+        message: "Ma'lumotlar bazasi serveriga ulanib bo'lmadi. Server aloqasi uzilgan.",
+      };
+    }
+    if (code === 'P1002') {
+      return {
+        status: HttpStatus.GATEWAY_TIMEOUT,
+        message: "Ma'lumotlar bazasi so'rovi vaqti tugadi (timeout).",
+      };
+    }
+    if (code === 'P1003') {
+      return {
+        status: HttpStatus.INTERNAL_SERVER_ERROR,
+        message: "Ma'lumotlar bazasi topilmadi.",
+      };
+    }
+    if (code === 'P1017') {
+      return {
+        status: HttpStatus.SERVICE_UNAVAILABLE,
+        message: "Ma'lumotlar bazasi serveri ulanishni yopdi.",
+      };
+    }
+
+    // Constraint / Domain errors
     if (code === 'P2002') {
       const targetStr = String(meta?.target || '').toLowerCase();
       if (targetStr.includes('phone')) {
@@ -159,9 +207,23 @@ export class HttpExceptionFilter implements ExceptionFilter {
       };
     }
 
+    if (code === 'P2021') {
+      return {
+        status: HttpStatus.INTERNAL_SERVER_ERROR,
+        message: "Ma'lumotlar jadvali topilmadi. Migratsiya talab qilinishi mumkin.",
+      };
+    }
+
+    if (code === 'P2022') {
+      return {
+        status: HttpStatus.INTERNAL_SERVER_ERROR,
+        message: "Ma'lumotlar ustuni topilmadi.",
+      };
+    }
+
     return {
-      status: HttpStatus.BAD_REQUEST,
-      message: "Ma'lumotlar bazasida xatolik yuz berdi.",
+      status: HttpStatus.INTERNAL_SERVER_ERROR,
+      message: "Ma'lumotlar bazasida ichki xatolik yuz berdi.",
     };
   }
 
