@@ -4095,18 +4095,16 @@ export class TelegramUpdate {
 
   // New Search & Filter Helper Methods
   private async handleCategoriesMenu(ctx: Context) {
+    // Include all categories that have at least 1 carpet (not archived)
     const categories = await this.prisma.category.findMany({
       where: {
         carpets: {
-          some: {
-            inventoryItems: {
-              some: { inventoryStatus: CarpetInventoryStatus.ACTIVE },
-            },
-          },
+          some: { isArchived: false },
         },
       },
-      select: { id: true, name: true },
-      take: 20,
+      select: { id: true, name: true, _count: { select: { carpets: true } } },
+      orderBy: { name: 'asc' },
+      take: 30,
     });
 
     if (categories.length === 0) {
@@ -4114,12 +4112,23 @@ export class TelegramUpdate {
       return;
     }
 
-    const inlineKeyboard = categories.map((cat) => [
-      {
-        text: cat.name,
-        callback_data: `filter_category_set_${cat.id}`,
-      },
-    ]);
+    // Show categories in 2-column inline keyboard
+    const inlineKeyboard: any[][] = [];
+    for (let i = 0; i < categories.length; i += 2) {
+      const row: any[] = [
+        {
+          text: `${categories[i].name} (${categories[i]._count.carpets})`,
+          callback_data: `filter_category_set_${categories[i].id}`,
+        },
+      ];
+      if (categories[i + 1]) {
+        row.push({
+          text: `${categories[i + 1].name} (${categories[i + 1]._count.carpets})`,
+          callback_data: `filter_category_set_${categories[i + 1].id}`,
+        });
+      }
+      inlineKeyboard.push(row);
+    }
 
     await ctx.reply('📂 Kategoriyani tanlang:', {
       reply_markup: {
@@ -4129,24 +4138,45 @@ export class TelegramUpdate {
   }
 
   private async handleSizesMenu(ctx: Context) {
-    const sizes = ['2x3', '3x4', '2.5x3.5', '1.5x2.3', '4x5', '1x2'];
+    // Fetch real sizes from DB (ACTIVE inventory items)
+    const items = await this.prisma.inventoryItem.findMany({
+      where: { inventoryStatus: CarpetInventoryStatus.ACTIVE },
+      select: { size: true },
+      take: 1000,
+    });
+
+    const sizeSet = new Set<string>();
+    for (const item of items) {
+      const s = (item.size || '').trim();
+      if (s) sizeSet.add(s);
+    }
+
+    // Sort sizes intelligently (by area: width * length)
+    const sizes = Array.from(sizeSet).sort((a, b) => {
+      const [aw, al] = a.split('x').map(Number);
+      const [bw, bl] = b.split('x').map(Number);
+      return (aw * al || 0) - (bw * bl || 0);
+    });
+
+    if (sizes.length === 0) {
+      await ctx.reply("O'lchamlar topilmadi. Qidiruv uchun o'lchamni yozib yuboring (masalan: 200x300)");
+      return;
+    }
+
     const inline_keyboard: any[][] = [];
-    for (let i = 0; i < sizes.length; i += 2) {
+    for (let i = 0; i < Math.min(sizes.length, 24); i += 3) {
       const row: any[] = [];
-      row.push({
-        text: sizes[i],
-        callback_data: `filter_size_set_${sizes[i]}`,
-      });
-      if (sizes[i + 1]) {
+      for (let j = 0; j < 3 && i + j < sizes.length; j++) {
+        const sz = sizes[i + j];
         row.push({
-          text: sizes[i + 1],
-          callback_data: `filter_size_set_${sizes[i + 1]}`,
+          text: sz,
+          callback_data: `filter_size_set_${sz}`,
         });
       }
       inline_keyboard.push(row);
     }
 
-    await ctx.reply("📏 O'lchamni tanlang:", {
+    await ctx.reply(`📏 O'lchamni tanlang (${sizes.length} xil o'lcham mavjud):`, {
       reply_markup: {
         inline_keyboard,
       },
@@ -4376,9 +4406,21 @@ export class TelegramUpdate {
           (sum: number, s: any) => sum + s.stock,
           0,
         );
+        // widthCm and lengthCm are already in centimeters (mm / 10)
+        // Display as meters: cm / 100
         const sizesList =
           carpet.sizes
-            .map((s: any) => `${s.widthCm / 100} x ${s.lengthCm / 100} m`)
+            .map((s: any) => {
+              // sizes are stored as cm, show as e.g. "200x300" or "2x3m"
+              const wCm = s.widthCm;
+              const lCm = s.lengthCm;
+              if (wCm >= 100 || lCm >= 100) {
+                // Already in cm (e.g. 200cm x 300cm) → show as "200x300 sm"
+                return `${wCm}x${lCm} sm`;
+              }
+              // Small values likely already meters representation
+              return `${wCm}x${lCm}`;
+            })
             .join(', ') || "Noma'lum";
 
         let priceText = `${carpet.price.toLocaleString()} so'm / m²`;

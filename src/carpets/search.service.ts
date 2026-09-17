@@ -217,21 +217,23 @@ export class SearchService {
    * Periodically builds or gets the in-memory search index of carpets.
    */
   async buildSearchIndex(): Promise<SearchCarpetItem[]> {
-    const cacheKey = 'search_carpet_index_v2';
+    const cacheKey = 'search_carpet_index_v3';
     const cached = await this.cacheService.get<SearchCarpetItem[]>(cacheKey);
     if (cached) return cached;
 
     this.logger.log('Search index cache miss, loading carpets...');
+    // Load ALL non-archived carpets with ALL their inventory items
+    // (not just ACTIVE ones, so all sizes are visible to search)
     const carpets = await this.prisma.carpet.findMany({
       where: { isArchived: false },
       include: {
         category: true,
         inventoryItems: {
-          where: { inventoryStatus: CarpetInventoryStatus.ACTIVE },
           select: {
             widthMm: true,
             lengthMm: true,
             size: true,
+            inventoryStatus: true,
           },
         },
         rollInventories: {
@@ -264,18 +266,33 @@ export class SearchService {
         }
       } else {
         for (const item of c.inventoryItems) {
-          const widthCm = Math.round(item.widthMm / 10);
-          const lengthCm = Math.round(item.lengthMm / 10);
-          const sizeStr = `${widthCm}x${lengthCm}`;
+          // Use the size string field directly if available (e.g. "200x300")
+          // Otherwise compute from mm values
+          let widthCm: number;
+          let lengthCm: number;
+          let sizeStr: string;
+
+          if (item.size && item.size.includes('x')) {
+            const parts = item.size.split('x');
+            widthCm = parseFloat(parts[0]) || Math.round(item.widthMm / 10);
+            lengthCm = parseFloat(parts[1]) || Math.round(item.lengthMm / 10);
+            sizeStr = item.size;
+          } else {
+            widthCm = Math.round(item.widthMm / 10);
+            lengthCm = Math.round(item.lengthMm / 10);
+            sizeStr = `${widthCm}x${lengthCm}`;
+          }
+
+          const isActive = item.inventoryStatus === CarpetInventoryStatus.ACTIVE;
           const existing = sizeMap.get(sizeStr);
           if (existing) {
-            existing.stock++;
+            if (isActive) existing.stock++;
           } else {
             sizeMap.set(sizeStr, {
               widthCm,
               lengthCm,
               sizeStr,
-              stock: 1,
+              stock: isActive ? 1 : 0,
             });
           }
         }
@@ -318,7 +335,7 @@ export class SearchService {
     // Cache index for 5 minutes (300 seconds)
     await this.cacheService.set(cacheKey, indexItems, 300);
     this.logger.log(
-      `Successfully built search index with ${indexItems.length} active carpets.`,
+      `Successfully built search index with ${indexItems.length} carpets (non-archived).`,
     );
     return indexItems;
   }
