@@ -12,6 +12,12 @@ import { formatOrderNumber } from '../common/utils/order-number';
 import { verifyTelegramUserJoinToken } from '../common/utils/telegram-link-token';
 import { SimilarityService } from '../ai/services/similarity.service';
 import { SearchService } from '../carpets/search.service';
+import {
+  TELEGRAM_BUTTONS,
+  normalizeMenuText,
+  escapeHtml,
+  maskChatId,
+} from './telegram.constants';
 
 type CollectionCodeEntry = {
   slug: string;
@@ -1468,14 +1474,17 @@ export class TelegramUpdate {
 
   @On('callback_query')
   async onCallbackQuery(@Ctx() ctx: Context) {
-    const callbackCtx = ctx as any;
-    const data = callbackCtx.callbackQuery?.data;
-    if (!data) return;
-    const chatId = ctx.chat?.id.toString() || '';
+    try {
+      const callbackCtx = ctx as any;
+      const data = callbackCtx.callbackQuery?.data;
+      if (!data) return;
+      const chatId = ctx.chat?.id.toString() || '';
 
-    await callbackCtx.answerCbQuery();
+      try {
+        await callbackCtx.answerCbQuery?.().catch(() => {});
+      } catch {}
 
-    const isSeller = await this.isSeller(ctx);
+      const isSeller = await this.isSeller(ctx);
     const isAdmin = await this.isAdmin(ctx);
     const isCourier = await this.isCourier(ctx);
 
@@ -2338,6 +2347,70 @@ export class TelegramUpdate {
       );
       return;
     }
+  } catch (err: any) {
+    this.logger.error(
+      `onCallbackQuery unhandled error for chat ${maskChatId(ctx.chat?.id)}: ${err?.message || err}`,
+    );
+  }
+}
+
+  @Command('help')
+  async onHelp(@Ctx() ctx: Context) {
+    const isAdmin = await this.isAdmin(ctx);
+    const isSeller = await this.isSeller(ctx);
+    const isCourier = await this.isCourier(ctx);
+
+    const helpMsg =
+      `🤖 <b>YEC Market Bot Qullanmasi</b>\n\n` +
+      `🔍 <b>Qidiruv imkoniyatlari:</b>\n` +
+      `• Gilam nomi bo'yicha: <code>stef</code>, <code>l102b</code>\n` +
+      `• O'lcham bo'yicha: <code>3x2</code>, <code>2x3</code>, <code>1.5x2</code>\n` +
+      `• Kirill yoki lotin yozuvida: <code>нео класика</code>\n` +
+      `• Gul kodi bo'yicha: <code>102</code>\n\n` +
+      `📌 <b>Mavjud buyruqlar:</b>\n` +
+      `/start - Botni qayta ishga tushirish\n` +
+      `/menu - Asosiy menyuni ko'rsatish\n` +
+      `/help - Qo'llanma va yordam\n\n` +
+      `📞 <b>Aloqa uchun:</b> @Saloxiddin_977`;
+
+    if (isAdmin) {
+      await ctx.reply(helpMsg, {
+        parse_mode: 'HTML',
+        ...this.buildMainKeyboard(await this.isSuperAdmin(ctx)),
+      });
+    } else if (isCourier) {
+      await ctx.reply(helpMsg, {
+        parse_mode: 'HTML',
+        ...this.buildCourierKeyboard(),
+      });
+    } else if (isSeller) {
+      await ctx.reply(helpMsg, {
+        parse_mode: 'HTML',
+        ...this.buildSellerKeyboard(),
+      });
+    } else {
+      await ctx.reply(helpMsg, {
+        parse_mode: 'HTML',
+        ...this.buildCustomerKeyboard(),
+      });
+    }
+  }
+
+  @Command('menu')
+  async onMenu(@Ctx() ctx: Context) {
+    const isAdmin = await this.isAdmin(ctx);
+    const isCourier = await this.isCourier(ctx);
+    const isSeller = await this.isSeller(ctx);
+
+    if (isAdmin) {
+      await this.showMainMenu(ctx);
+    } else if (isCourier) {
+      await this.showCourierMenu(ctx);
+    } else if (isSeller) {
+      await this.showSellerMenu(ctx);
+    } else {
+      await this.showCustomerMenu(ctx);
+    }
   }
 
   @Command('carpets')
@@ -2352,408 +2425,558 @@ export class TelegramUpdate {
 
   @On('text')
   async onText(@Ctx() ctx: Context) {
-    const chatId = ctx.chat!.id.toString();
-    const text = ((ctx as any).message?.text || '').trim();
-    if (!text || text.startsWith('/')) return;
+    try {
+      const chatId = ctx.chat!.id.toString();
+      const rawText = (ctx as any).message?.text || '';
+      const text = rawText.trim();
+      if (!text || text.startsWith('/')) return;
 
-    const isAdmin = await this.isAdmin(ctx);
-    const isSeller = await this.isSeller(ctx);
-    const isCourier = await this.isCourier(ctx);
+      const normalized = normalizeMenuText(text);
+      const normalizedLower = normalized.toLowerCase();
 
-    if (isAdmin && this.pendingReturnApprovals.has(chatId)) {
-      const orderId = this.pendingReturnApprovals.get(chatId)!;
-      const deliveryCost = parseInt(text.replace(/\s/g, ''));
-      if (isNaN(deliveryCost) || deliveryCost < 0) {
-        await ctx.reply(
-          "Iltimos, kuryer xarajatini raqam ko'rinishida kiriting (masalan: 80000):",
-        );
-        return;
-      }
+      const isAdmin = await this.isAdmin(ctx);
+      const isSeller = await this.isSeller(ctx);
+      const isCourier = await this.isCourier(ctx);
 
-      const order = await this.prisma.order.findUnique({
-        where: { id: orderId },
-        include: { items: true },
-      });
+      // 1. Pending refund approval flow for admins
+      if (isAdmin && this.pendingReturnApprovals.has(chatId)) {
+        const orderId = this.pendingReturnApprovals.get(chatId)!;
+        const deliveryCost = parseInt(text.replace(/\s/g, ''));
+        if (isNaN(deliveryCost) || deliveryCost < 0) {
+          await ctx.reply(
+            "Iltimos, kuryer xarajatini raqam ko'rinishida kiriting (masalan: 80000):",
+          );
+          return;
+        }
 
-      if (!order) {
+        const order = await this.prisma.order.findUnique({
+          where: { id: orderId },
+          include: { items: true },
+        });
+
+        if (!order) {
+          this.pendingReturnApprovals.delete(chatId);
+          await ctx.reply('Buyurtma topilmadi.');
+          return;
+        }
+
+        const paidAmount = Number(order.paidAmount);
+        const refundAmount = Math.max(0, paidAmount - deliveryCost);
+
         this.pendingReturnApprovals.delete(chatId);
-        await ctx.reply('Buyurtma topilmadi.');
-        return;
-      }
 
-      const paidAmount = Number(order.paidAmount);
-      const refundAmount = Math.max(0, paidAmount - deliveryCost);
+        const previewMessage =
+          `━━━━━━━━━━━━━━━\n` +
+          `🔍 <b>REFUND PREVIEW</b>\n\n` +
+          `<b>Paid:</b> ${paidAmount.toLocaleString('uz-UZ')} so'm\n` +
+          `<b>Delivery Cost:</b> ${deliveryCost.toLocaleString('uz-UZ')} so'm\n` +
+          `<b>Refund Amount:</b> ${refundAmount.toLocaleString('uz-UZ')} so'm\n\n` +
+          `Confirm?`;
 
-      this.pendingReturnApprovals.delete(chatId);
-
-      const previewMessage =
-        `━━━━━━━━━━━━━━━\n` +
-        `🔍 <b>REFUND PREVIEW</b>\n\n` +
-        `<b>Paid:</b> ${paidAmount.toLocaleString('uz-UZ')} so'm\n` +
-        `<b>Delivery Cost:</b> ${deliveryCost.toLocaleString('uz-UZ')} so'm\n` +
-        `<b>Refund Amount:</b> ${refundAmount.toLocaleString('uz-UZ')} so'm\n\n` +
-        `Confirm?`;
-
-      const replyMarkup = {
-        inline_keyboard: [
-          [
-            {
-              text: '✅ Confirm Refund',
-              callback_data: `admin_return_confirm_${orderId}_${deliveryCost}`,
-            },
-            {
-              text: '❌ Cancel',
-              callback_data: `admin_return_cancel_${orderId}`,
-            },
+        const replyMarkup = {
+          inline_keyboard: [
+            [
+              {
+                text: '✅ Confirm Refund',
+                callback_data: `admin_return_confirm_${orderId}_${deliveryCost}`,
+              },
+              {
+                text: '❌ Cancel',
+                callback_data: `admin_return_cancel_${orderId}`,
+              },
+            ],
           ],
-        ],
-      };
+        };
 
-      await ctx.reply(previewMessage, {
-        parse_mode: 'HTML',
-        reply_markup: replyMarkup,
-      });
-      return;
-    }
-
-    if (isAdmin) {
-      if (text === this.MENU_BACK) {
-        this.clearSearchState(chatId);
-        await this.showMainMenu(ctx, 'Asosiy menyu.');
+        await ctx.reply(previewMessage, {
+          parse_mode: 'HTML',
+          reply_markup: replyMarkup,
+        });
         return;
       }
 
-      if (text === '🔍 Mahsulot qidirish' || text === this.MENU_MAIN_SEARCH) {
+      // 2. Global Back Navigation button
+      if (
+        text === this.MENU_BACK ||
+        text === '🔙 Orqaga' ||
+        text === this.MENU_CUSTOMER_BACK ||
+        text === this.MENU_SELLERS_BACK ||
+        text === this.MENU_COURIERS_BACK ||
+        normalizedLower === 'orqaga' ||
+        normalizedLower === 'menyuga qaytish'
+      ) {
         this.clearSearchState(chatId);
-        await this.showSearchMenu(ctx);
+        if (isAdmin) {
+          await this.showMainMenu(ctx, 'Asosiy menyu.');
+        } else if (isCourier) {
+          await this.showCourierMenu(ctx, 'Kuryer menyusi.');
+        } else if (isSeller) {
+          await this.showSellerMenu(ctx, 'Sotuvchi menyusi.');
+        } else {
+          await this.showCustomerMenu(ctx, 'Asosiy menyu.');
+        }
         return;
       }
 
-      if (text === this.MENU_SEARCH_IMAGE) {
+      // 3. Admin: Couriers section ("🚚 Kuryerlar")
+      const isCouriersBtn =
+        text === this.MENU_MAIN_COURIERS ||
+        normalized === normalizeMenuText(this.MENU_MAIN_COURIERS) ||
+        normalizedLower === 'kuryerlar' ||
+        normalizedLower === '🚚 kuryerlar';
+
+      if (isCouriersBtn) {
         this.clearSearchState(chatId);
-        await this.handleSearchImage(ctx);
+        if (isAdmin) {
+          await this.showCourierManagementMenu(ctx);
+        } else {
+          await ctx.reply(
+            "🔒 Ushbu bo'lim faqat do'kon ma'murlari (adminlar) uchun mo'ljallangan.\n\nAgar siz admin bo'lsangiz, profilingizni tasdiqlash uchun /start bosing.",
+            this.buildCustomerKeyboard(),
+          );
+        }
         return;
       }
 
-      if (text === this.MENU_SEARCH_NAME) {
-        await this.handleSearchName(ctx);
+      // 4. Admin: Sellers section ("🤝 Sotuvchilar")
+      const isSellersBtn =
+        text === this.MENU_MAIN_ADD_SELLER ||
+        normalized === normalizeMenuText(this.MENU_MAIN_ADD_SELLER) ||
+        normalizedLower === 'sotuvchilar' ||
+        normalizedLower === '🤝 sotuvchilar';
+
+      if (isSellersBtn) {
+        this.clearSearchState(chatId);
+        if (isAdmin) {
+          await this.showSellerManagementMenu(ctx);
+        } else {
+          await ctx.reply(
+            "🔒 Ushbu bo'lim faqat do'kon ma'murlari (adminlar) uchun mo'ljallangan.\n\nAgar siz admin bo'lsangiz, profilingizni tasdiqlash uchun /start bosing.",
+            this.buildCustomerKeyboard(),
+          );
+        }
         return;
       }
 
-      if (text === this.MENU_SEARCH_SIZE) {
-        await this.handleSearchSize(ctx);
+      // 5. Admin: Admins management ("👥 Adminlar" / "👤 Adminlar")
+      const isAdminsBtn =
+        text === this.MENU_MAIN_ADD_ADMIN ||
+        text === '👤 Adminlar' ||
+        normalized === normalizeMenuText(this.MENU_MAIN_ADD_ADMIN) ||
+        normalizedLower === 'adminlar' ||
+        normalizedLower === '👥 adminlar' ||
+        normalizedLower === '👤 adminlar';
+
+      if (isAdminsBtn) {
+        this.clearSearchState(chatId);
+        if (isAdmin) {
+          await this.handleInviteLink(ctx);
+        } else {
+          await ctx.reply(
+            "🔒 Ushbu bo'lim faqat do'kon ma'murlari (adminlar) uchun mo'ljallangan.\n\nAgar siz admin bo'lsangiz, profilingizni tasdiqlash uchun /start bosing.",
+            this.buildCustomerKeyboard(),
+          );
+        }
         return;
       }
 
-      if (text === this.MENU_SEARCH_CATEGORY) {
-        await this.handleSearchCategory(ctx);
+      // 6. Orders section ("📦 Buyurtmalar" / "📦 Mening buyurtmalarim")
+      const isOrdersBtn =
+        text === this.MENU_MAIN_NEW_ORDERS ||
+        text === '📦 Buyurtmalar' ||
+        text === this.MENU_CUSTOMER_ORDERS ||
+        normalized === normalizeMenuText(this.MENU_MAIN_NEW_ORDERS) ||
+        normalizedLower === 'buyurtmalar' ||
+        normalizedLower === 'buyurtmalarim';
+
+      if (isOrdersBtn) {
+        this.clearSearchState(chatId);
+        if (isAdmin) {
+          await this.handleNewOrders(ctx);
+        } else if (isCourier) {
+          await this.handleCourierOrders(ctx);
+        } else {
+          await this.showCustomerOrders(ctx);
+        }
         return;
       }
 
-      if (text === this.MENU_SEARCH_CODE) {
-        await this.handleSearchCode(ctx);
+      // 7. Couriers management sub-buttons
+      if (
+        text === this.MENU_COURIERS_ALL ||
+        normalized === normalizeMenuText(this.MENU_COURIERS_ALL) ||
+        normalizedLower === 'barcha kuryerlar'
+      ) {
+        this.clearSearchState(chatId);
+        if (isAdmin) {
+          await this.showAllCouriers(ctx);
+        } else {
+          await ctx.reply("🔒 Bu bo'lim faqat adminlar uchun.");
+        }
         return;
       }
 
-      if (text === '📦 Buyurtmalar' || text === this.MENU_MAIN_NEW_ORDERS) {
+      if (
+        text === this.MENU_COURIERS_ADD ||
+        normalized === normalizeMenuText(this.MENU_COURIERS_ADD) ||
+        normalizedLower === "kuryer qo'shish"
+      ) {
         this.clearSearchState(chatId);
-        await this.handleNewOrders(ctx);
+        if (isAdmin) {
+          await this.handleCourierInviteLink(ctx);
+        } else {
+          await ctx.reply("🔒 Bu bo'lim faqat adminlar uchun.");
+        }
         return;
       }
 
-      if (text === '👤 Adminlar' || text === this.MENU_MAIN_ADD_ADMIN) {
+      // 8. Sellers management sub-buttons
+      if (
+        text === this.MENU_SELLERS_ALL ||
+        normalized === normalizeMenuText(this.MENU_SELLERS_ALL) ||
+        normalizedLower === 'barcha sotuvchilar'
+      ) {
         this.clearSearchState(chatId);
-        await this.handleInviteLink(ctx);
+        if (isAdmin) {
+          await this.showAllSellers(ctx);
+        } else {
+          await ctx.reply("🔒 Bu bo'lim faqat adminlar uchun.");
+        }
         return;
       }
 
-      if (text === this.MENU_MAIN_ADD_SELLER) {
+      if (
+        text === this.MENU_SELLERS_ADD ||
+        normalized === normalizeMenuText(this.MENU_SELLERS_ADD) ||
+        normalizedLower === "sotuvchi qo'shish"
+      ) {
         this.clearSearchState(chatId);
-        await this.showSellerManagementMenu(ctx);
+        if (isAdmin) {
+          await this.handleSellerInviteLink(ctx);
+        } else {
+          await ctx.reply("🔒 Bu bo'lim faqat adminlar uchun.");
+        }
         return;
       }
 
-      if (text === this.MENU_SELLERS_ALL) {
-        this.clearSearchState(chatId);
-        await this.showAllSellers(ctx);
+      // 9. Courier personal orders button
+      if (
+        text === this.MENU_COURIER_ORDERS ||
+        normalized === normalizeMenuText(this.MENU_COURIER_ORDERS) ||
+        normalizedLower === 'mening buyurtmalarim'
+      ) {
+        if (isCourier) {
+          await this.handleCourierOrders(ctx);
+        } else {
+          await this.showCustomerOrders(ctx);
+        }
         return;
       }
 
-      if (text === this.MENU_SELLERS_ADD) {
-        this.clearSearchState(chatId);
-        await this.handleSellerInviteLink(ctx);
-        return;
-      }
+      // 10. Search entry button ("🔍 Gilam qidirish" / "🔍 Mahsulot qidirish")
+      const isSearchBtn =
+        text === '🔍 Gilam qidirish' ||
+        text === '🔍 Mahsulot qidirish' ||
+        text === this.MENU_MAIN_SEARCH ||
+        normalizedLower === 'gilam qidirish' ||
+        normalizedLower === 'mahsulot qidirish';
 
-      if (text === this.MENU_SELLERS_BACK) {
+      if (isSearchBtn) {
         this.clearSearchState(chatId);
-        await this.showMainMenu(ctx, 'Asosiy menyu.');
-        return;
-      }
-
-      if (text === this.MENU_MAIN_COURIERS) {
-        this.clearSearchState(chatId);
-        await this.showCourierManagementMenu(ctx);
-        return;
-      }
-
-      if (text === this.MENU_COURIERS_ALL) {
-        this.clearSearchState(chatId);
-        await this.showAllCouriers(ctx);
-        return;
-      }
-
-      if (text === this.MENU_COURIERS_ADD) {
-        this.clearSearchState(chatId);
-        await this.handleCourierInviteLink(ctx);
-        return;
-      }
-
-      if (text === this.MENU_COURIERS_BACK) {
-        this.clearSearchState(chatId);
-        await this.showMainMenu(ctx, 'Asosiy menyu.');
-        return;
-      }
-    } else if (isCourier) {
-      if (text === this.MENU_COURIER_ORDERS) {
-        await this.handleCourierOrders(ctx);
-        return;
-      }
-      if (text === this.MENU_BACK) {
-        this.clearSearchState(chatId);
-        await this.showCourierMenu(ctx, 'Kuryer menyusi.');
-        return;
-      }
-      if (text === '🔍 Mahsulot qidirish' || text === this.MENU_MAIN_SEARCH) {
-        this.clearSearchState(chatId);
-        await this.showSearchMenu(ctx);
-        return;
-      }
-    } else if (isSeller) {
-      if (text === this.MENU_BACK) {
-        this.clearSearchState(chatId);
-        await this.showSellerMenu(ctx, 'Asosiy menyu.');
-        return;
-      }
-      if (text === '🔍 Mahsulot qidirish' || text === this.MENU_MAIN_SEARCH) {
-        this.clearSearchState(chatId);
-        await this.showSearchMenu(ctx);
-        return;
-      }
-      if (text === this.MENU_SEARCH_IMAGE) {
-        this.clearSearchState(chatId);
-        await this.handleSearchImage(ctx);
-        return;
-      }
-      if (text === this.MENU_SEARCH_NAME) {
-        await this.handleSearchName(ctx);
-        return;
-      }
-      if (text === this.MENU_SEARCH_SIZE) {
-        await this.handleSearchSize(ctx);
-        return;
-      }
-      if (text === this.MENU_SEARCH_CATEGORY) {
-        await this.handleSearchCategory(ctx);
-        return;
-      }
-      if (text === this.MENU_SEARCH_CODE) {
-        await this.handleSearchCode(ctx);
-        return;
-      }
-    } else {
-      if (text === '🔍 Gilam qidirish') {
-        this.clearSearchState(chatId);
-        this.carpetSearchState.add(chatId);
-        await ctx.reply(
-          "🔍 Gilam izlash uchun uning nomi, o'lchami (masalan: 3x2) yoki kodini kiriting:",
-          {
-            reply_markup: {
-              keyboard: [[{ text: '🔙 Orqaga' }]],
-              resize_keyboard: true,
+        if (isAdmin || isSeller) {
+          await this.showSearchMenu(ctx);
+        } else {
+          this.carpetSearchState.add(chatId);
+          await ctx.reply(
+            "🔍 Gilam izlash uchun uning nomi, o'lchami (masalan: 3x2) yoki kodini kiriting:",
+            {
+              reply_markup: {
+                keyboard: [[{ text: '🔙 Orqaga' }]],
+                resize_keyboard: true,
+              },
             },
-          },
-        );
+          );
+        }
         return;
       }
 
-      if (text === '🖼 Rasm orqali qidirish') {
+      // 11. Image search button ("🖼 Rasm orqali qidirish" / "🖼️ Rasm bilan qidirish")
+      if (
+        text === '🖼 Rasm orqali qidirish' ||
+        text === this.MENU_SEARCH_IMAGE ||
+        normalizedLower === 'rasm orqali qidirish' ||
+        normalizedLower === 'rasm bilan qidirish'
+      ) {
         this.clearSearchState(chatId);
         this.activePhotoSearchChats.add(chatId);
-        await ctx.reply(
-          '🖼 Rasm orqali qidirish uchun gilam rasmini yuboring:',
-          {
-            reply_markup: {
-              keyboard: [[{ text: '🔙 Orqaga' }]],
-              resize_keyboard: true,
-            },
+        await ctx.reply('🖼 Rasm orqali qidirish uchun gilam rasmini yuboring:', {
+          reply_markup: {
+            keyboard: [[{ text: '🔙 Orqaga' }]],
+            resize_keyboard: true,
           },
-        );
+        });
         return;
       }
 
-      if (text === '📂 Kategoriyalar') {
+      // 12. Search sub-menu options
+      if (
+        text === this.MENU_SEARCH_NAME ||
+        normalizedLower === "nom bo'yicha"
+      ) {
+        await this.handleSearchName(ctx);
+        return;
+      }
+
+      if (
+        text === this.MENU_SEARCH_SIZE ||
+        text === "📏 O'lcham bo'yicha" ||
+        normalizedLower === "o'lcham bo'yicha"
+      ) {
         this.clearSearchState(chatId);
-        await this.handleCategoriesMenu(ctx);
+        if (isAdmin || isSeller) {
+          await this.handleSearchSize(ctx);
+        } else {
+          await this.handleSizesMenu(ctx);
+        }
         return;
       }
 
-      if (text === "📏 O'lcham bo'yicha") {
+      if (
+        text === this.MENU_SEARCH_CATEGORY ||
+        text === '📂 Kategoriyalar' ||
+        normalizedLower === 'kategoriyalar' ||
+        normalizedLower === "kategoriya bo'yicha"
+      ) {
         this.clearSearchState(chatId);
-        await this.handleSizesMenu(ctx);
+        if (isAdmin || isSeller) {
+          await this.handleSearchCategory(ctx);
+        } else {
+          await this.handleCategoriesMenu(ctx);
+        }
         return;
       }
 
-      if (text === '💎 Premium') {
+      if (
+        text === this.MENU_SEARCH_CODE ||
+        normalizedLower === 'gul kodi bilan'
+      ) {
+        await this.handleSearchCode(ctx);
+        return;
+      }
+
+      // 13. Customer menu options
+      if (text === '💎 Premium' || normalizedLower === 'premium') {
         this.clearSearchState(chatId);
         await this.handlePremiumSearch(ctx);
         return;
       }
 
-      if (text === '❤️ Sevimlilar') {
+      if (text === '❤️ Sevimlilar' || normalizedLower === 'sevimlilar') {
         this.clearSearchState(chatId);
         await this.handleFavoritesMenu(ctx);
         return;
       }
 
-      if (text === '📞 Operator') {
+      if (text === '📞 Operator' || normalizedLower === 'operator') {
         await ctx.reply(
           "📞 Operator bilan bog'lanish:\n\nTelegram: @Saloxiddin_977\n\nSavollaringiz bo'lsa, bemalol yozishingiz mumkin!",
         );
         return;
       }
 
-      if (text === '⚙ Sozlamalar') {
+      if (text === '⚙ Sozlamalar' || normalizedLower === 'sozlamalar') {
         await this.handleSettingsMenu(ctx);
         return;
       }
 
+      if (text === '🏢 Filiallar' || normalizedLower === 'filiallar') {
+        await ctx.reply(
+          "🏢 <b>YEC Toshkent Filiallari:</b>\n\n📍 <b>Bosh do'kon:</b> Toshkent sh., Chilonzor tumani\n🕒 Ish vaqti: 09:00 - 20:00\n📞 Aloqa: +998 90 000 00 00",
+          { parse_mode: 'HTML' },
+        );
+        return;
+      }
+
       if (
-        text === '🔙 Orqaga' ||
-        text === this.MENU_BACK ||
-        text === this.MENU_CUSTOMER_BACK
+        text === "💬 Admin bilan bog'lanish" ||
+        normalizedLower === "admin bilan bog'lanish"
       ) {
-        this.clearSearchState(chatId);
-        await this.showCustomerMenu(ctx, 'Asosiy menyu.');
-        return;
-      }
-    }
-
-    if (this.carpetSearchState.has(chatId)) {
-      if (text === '🔙 Orqaga' || text === this.MENU_BACK) {
-        this.clearSearchState(chatId);
-        await this.showCustomerMenu(ctx, 'Asosiy menyu.');
-        return;
-      }
-
-      this.clearSearchState(chatId);
-      const state = { query: text, page: 1 };
-      this.userSearchState.set(chatId, state);
-      await this.renderSearchResults(ctx, state);
-      return;
-    }
-
-    if (this.searchSizeState.has(chatId)) {
-      if (text === this.MENU_BACK) {
-        this.clearSearchState(chatId);
-        await this.showSearchMenu(ctx);
-        return;
-      }
-
-      const sizes = await this.getAvailableSizes();
-      if (!sizes.includes(text)) {
         await ctx.reply(
-          'Iltimos, mavjud razmerlardan birini tanlang.',
-          this.buildBackFirstKeyboard(sizes, 'Razmerni tanlang'),
+          "💬 Admin bilan bog'lanish uchun: @Saloxiddin_977 profiliga murojaat qilishingiz mumkin.",
         );
         return;
       }
 
-      this.clearSearchState(chatId);
-      const state = { query: '', size: text, page: 1 };
-      this.userSearchState.set(chatId, state);
-      await this.renderSearchResults(ctx, state);
-      return;
-    }
-
-    if (this.searchNameState.has(chatId)) {
-      if (text === this.MENU_BACK) {
+      // 14. Active input states (Size, Name, Code, Category, General Carpet)
+      if (this.carpetSearchState.has(chatId)) {
         this.clearSearchState(chatId);
-        await this.showSearchMenu(ctx);
+        const state = { query: text, page: 1 };
+        this.userSearchState.set(chatId, state);
+        await this.renderSearchResults(ctx, state);
         return;
       }
 
-      const names = await this.getAvailableNames();
-      if (!names.includes(text)) {
-        await ctx.reply(
-          'Iltimos, mavjud gilam nomlaridan birini tanlang.',
-          this.buildBackFirstKeyboard(names, 'Gilam nomini tanlang'),
-        );
+      if (this.searchSizeState.has(chatId)) {
+        const sizes = await this.getAvailableSizes();
+        if (!sizes.includes(text)) {
+          await ctx.reply(
+            'Iltimos, mavjud razmerlardan birini tanlang.',
+            this.buildBackFirstKeyboard(sizes, 'Razmerni tanlang'),
+          );
+          return;
+        }
+
+        this.clearSearchState(chatId);
+        const state = { query: '', size: text, page: 1 };
+        this.userSearchState.set(chatId, state);
+        await this.renderSearchResults(ctx, state);
         return;
       }
 
-      this.clearSearchState(chatId);
+      if (this.searchNameState.has(chatId)) {
+        const names = await this.getAvailableNames();
+        if (!names.includes(text)) {
+          await ctx.reply(
+            'Iltimos, mavjud gilam nomlaridan birini tanlang.',
+            this.buildBackFirstKeyboard(names, 'Gilam nomini tanlang'),
+          );
+          return;
+        }
+
+        this.clearSearchState(chatId);
+        const state = { query: text, page: 1 };
+        this.userSearchState.set(chatId, state);
+        await this.renderSearchResults(ctx, state);
+        return;
+      }
+
+      if (this.searchCodeState.has(chatId)) {
+        this.clearSearchState(chatId);
+        const state = { query: text, page: 1 };
+        this.userSearchState.set(chatId, state);
+        await this.renderSearchResults(ctx, state);
+        return;
+      }
+
+      if (this.searchCategoryState.has(chatId)) {
+        const categories = await this.getAvailableCategoryNames();
+        if (!categories.includes(text)) {
+          await ctx.reply(
+            'Iltimos, mavjud turlardan birini tanlang.',
+            this.buildBackFirstKeyboard(categories, 'Turini tanlang'),
+          );
+          return;
+        }
+
+        this.clearSearchState(chatId);
+        const category = await this.prisma.category.findFirst({
+          where: { name: text },
+        });
+        const state = { query: '', categoryId: category?.id, page: 1 };
+        this.userSearchState.set(chatId, state);
+        await this.renderSearchResults(ctx, state);
+        return;
+      }
+
+      // Check if it's any other navigation button we might have missed
+      const knownButtons = [
+        '🔙 Orqaga',
+        '✅ Tasdiqlash',
+        '❌ Bekor qilish',
+        this.MENU_SELLERS_BACK,
+        this.MENU_COURIERS_BACK,
+        this.MENU_BACK,
+      ];
+      if (knownButtons.includes(text)) return;
+
+      // 15. Direct search for all other text inputs (e.g. "stef", "3x2", "l102b", "нео класика", "nonexistentxyz123")
       const state = { query: text, page: 1 };
       this.userSearchState.set(chatId, state);
       await this.renderSearchResults(ctx, state);
-      return;
-    }
-
-    if (this.searchCodeState.has(chatId)) {
-      if (text === this.MENU_BACK) {
-        this.clearSearchState(chatId);
-        await this.showSearchMenu(ctx);
-        return;
-      }
-
-      this.clearSearchState(chatId);
-      const state = { query: text, page: 1 };
-      this.userSearchState.set(chatId, state);
-      await this.renderSearchResults(ctx, state);
-      return;
-    }
-
-    if (this.searchCategoryState.has(chatId)) {
-      if (text === this.MENU_BACK) {
-        this.clearSearchState(chatId);
-        await this.showSearchMenu(ctx);
-        return;
-      }
-
-      const categories = await this.getAvailableCategoryNames();
-      if (!categories.includes(text)) {
+    } catch (err: any) {
+      this.logger.error(
+        `onText unhandled error for chat ${maskChatId(ctx.chat?.id)}: ${err?.message || err}`,
+      );
+      try {
         await ctx.reply(
-          'Iltimos, mavjud turlardan birini tanlang.',
-          this.buildBackFirstKeyboard(categories, 'Turini tanlang'),
+          "⚠️ Xatolik yuz berdi. Iltimos, qayta urinib ko'ring yoki /start bosing.",
         );
-        return;
-      }
+      } catch {}
+    }
+  }
 
-      this.clearSearchState(chatId);
-      const category = await this.prisma.category.findFirst({
-        where: { name: text },
-      });
-      const state = { query: '', categoryId: category?.id, page: 1 };
-      this.userSearchState.set(chatId, state);
-      await this.renderSearchResults(ctx, state);
+  private async showCustomerOrders(ctx: Context) {
+    const chatId = ctx.chat?.id?.toString();
+    if (!chatId) return;
+
+    const user = await this.prisma.user.findFirst({
+      where: { telegramChatId: chatId },
+    });
+
+    const userConditions: any[] = [];
+    if (user?.id) {
+      userConditions.push({ customerId: user.id });
+    }
+    if (user?.phone) {
+      userConditions.push({ customerPhone: user.phone });
+      userConditions.push({ phone: user.phone });
+    }
+
+    if (userConditions.length === 0) {
+      await ctx.reply(
+        "📋 Sizda hali buyurtmalar mavjud emas. Buyurtma berish uchun yecmarket.uz saytidan foydalanishingiz mumkin.",
+        this.buildCustomerKeyboard(),
+      );
       return;
     }
 
-    // Check if it's any other navigation button we might have missed
-    const knownButtons = [
-      '🔙 Orqaga',
-      '✅ Tasdiqlash',
-      '❌ Bekor qilish',
-      this.MENU_SELLERS_BACK,
-      this.MENU_BACK,
-    ];
-    if (knownButtons.includes(text)) return;
+    const orders = await this.prisma.order.findMany({
+      where: { OR: userConditions },
+      include: {
+        items: {
+          include: { carpet: { select: { name: true } } },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 5,
+    });
 
-    // Direct search for everyone
-    const state = { query: text, page: 1 };
-    this.userSearchState.set(chatId, state);
-    await this.renderSearchResults(ctx, state);
-    return;
+    if (orders.length === 0) {
+      await ctx.reply(
+        "📋 Hozircha sizda buyurtmalar mavjud emas. Buyurtma berish uchun yecmarket.uz saytidan foydalanishingiz mumkin.",
+        this.buildCustomerKeyboard(),
+      );
+      return;
+    }
+
+    await ctx.reply(
+      `📦 <b>Sizning buyurtmalaringiz:</b> (${orders.length} ta)`,
+      { parse_mode: 'HTML', ...this.buildCustomerKeyboard() },
+    );
+
+    for (const order of orders) {
+      const itemsText = order.items
+        .map((i) => `- ${escapeHtml(i.carpet?.name ?? "Noma'lum gilam")} x${i.quantity}`)
+        .join('\n');
+
+      let statusIcon = '⏳';
+      if (order.status === 'ACCEPTED') statusIcon = '✅';
+      if (order.status === 'ON_WAY') statusIcon = '🚚';
+      if (order.status === 'DELIVERED') statusIcon = '🎉';
+      if (order.status === 'CANCELLED') statusIcon = '❌';
+
+      const totalAmount =
+        Number(order.paidAmount || 0) + Number(order.remainingAmount || 0);
+
+      const msg =
+        `📦 <b>Buyurtma #${formatOrderNumber(order.id, order.createdAt)}</b>\n` +
+        `Manzil: ${escapeHtml(order.address)}\n` +
+        `Umumiy summa: ${totalAmount.toLocaleString('uz-UZ')} so'm\n` +
+        `${statusIcon} Holati: ${order.status}\n\n` +
+        `Tarkibi:\n${itemsText}`;
+
+      await ctx.reply(msg, { parse_mode: 'HTML' });
+    }
   }
 
   private async processCarpetSearch(
@@ -4105,13 +4328,28 @@ export class TelegramUpdate {
       limit: 5,
     };
 
-    const { results, totalCount } = await this.searchService.search(
-      state.query,
-      searchOptions,
-    );
+    let results: any[] = [];
+    let totalCount = 0;
+    try {
+      const searchRes = await this.searchService.search(
+        state.query,
+        searchOptions,
+      );
+      results = searchRes.results;
+      totalCount = searchRes.totalCount;
+    } catch (err: any) {
+      this.logger.error(
+        `SearchService error for query "${state.query}": ${err?.message || err}`,
+      );
+      await ctx.reply(
+        "🔍 Qidiruv xizmatida vaqtincha nosozlik yuz berdi. Iltimos, birozdan so'ng qayta urinib ko'ring.",
+      );
+      return;
+    }
 
     if (results.length === 0) {
-      const msg = `🔍 "<b>${state.query || 'Filtrlar'}</b>" bo'yicha hech qanday gilam topilmadi.`;
+      const safeQuery = escapeHtml(state.query || 'Filtrlar');
+      const msg = `🔍 "<b>${safeQuery}</b>" bo'yicha hech qanday gilam topilmadi.`;
       const hasFilters =
         state.categoryId ||
         state.shape ||
@@ -4133,84 +4371,101 @@ export class TelegramUpdate {
     }
 
     for (const carpet of results) {
-      const stockCount = carpet.sizes.reduce((sum, s) => sum + s.stock, 0);
-      const sizesList =
-        carpet.sizes
-          .map((s) => `${s.widthCm / 100} x ${s.lengthCm / 100} m`)
-          .join(', ') || "Noma'lum";
-
-      let priceText = `${carpet.price.toLocaleString()} so'm / m²`;
-      if (carpet.discountPercent > 0) {
-        const discountedPrice = Math.round(
-          carpet.price * (1 - carpet.discountPercent / 100),
+      try {
+        const stockCount = carpet.sizes.reduce(
+          (sum: number, s: any) => sum + s.stock,
+          0,
         );
-        priceText = `<s>${carpet.price.toLocaleString()}</s> <b>${discountedPrice.toLocaleString()}</b> so'm / m² (-${carpet.discountPercent}%)`;
-      }
+        const sizesList =
+          carpet.sizes
+            .map((s: any) => `${s.widthCm / 100} x ${s.lengthCm / 100} m`)
+            .join(', ') || "Noma'lum";
 
-      let textMsg =
-        `✨ <b>${carpet.name}</b> ✨\n\n` +
-        `📂 <b>Kategoriya:</b> ${carpet.categoryName || "Noma'lum"}\n` +
-        `🔢 <b>Gul kodi:</b> ${carpet.designCode || carpet.uniqueCode}\n` +
-        `💰 <b>Narxi:</b> ${priceText}\n` +
-        `🧵 <b>Material:</b> ${carpet.material || "Noma'lum"}\n` +
-        `📍 <b>O\'lchamlar:</b> ${sizesList}\n` +
-        `📦 <b>Status:</b> ${stockCount > 0 ? '✅ Sotuvda bor' : '❌ Tugagan'}\n`;
+        let priceText = `${carpet.price.toLocaleString()} so'm / m²`;
+        if (carpet.discountPercent > 0) {
+          const discountedPrice = Math.round(
+            carpet.price * (1 - carpet.discountPercent / 100),
+          );
+          priceText = `<s>${carpet.price.toLocaleString()}</s> <b>${discountedPrice.toLocaleString()}</b> so'm / m² (-${carpet.discountPercent}%)`;
+        }
 
-      if (carpet.description) {
-        textMsg += `📝 <b>Tavsif:</b> ${carpet.description}\n`;
-      }
+        const safeCarpetName = escapeHtml(carpet.name);
+        const safeCatName = escapeHtml(carpet.categoryName || "Noma'lum");
+        const safeCode = escapeHtml(carpet.designCode || carpet.uniqueCode);
+        const safeMaterial = escapeHtml(carpet.material || "Noma'lum");
 
-      const user = await this.prisma.user.findFirst({
-        where: { telegramChatId: chatId },
-      });
-      let isLiked = false;
-      if (user) {
-        const like = await this.prisma.carpetLike.findUnique({
-          where: { userId_carpetId: { userId: user.id, carpetId: carpet.id } },
+        let textMsg =
+          `✨ <b>${safeCarpetName}</b> ✨\n\n` +
+          `📂 <b>Kategoriya:</b> ${safeCatName}\n` +
+          `🔢 <b>Gul kodi:</b> ${safeCode}\n` +
+          `💰 <b>Narxi:</b> ${priceText}\n` +
+          `🧵 <b>Material:</b> ${safeMaterial}\n` +
+          `📍 <b>O'lchamlar:</b> ${escapeHtml(sizesList)}\n` +
+          `📦 <b>Status:</b> ${stockCount > 0 ? '✅ Sotuvda bor' : '❌ Tugagan'}\n`;
+
+        if (carpet.description) {
+          textMsg += `📝 <b>Tavsif:</b> ${escapeHtml(carpet.description)}\n`;
+        }
+
+        const user = await this.prisma.user.findFirst({
+          where: { telegramChatId: chatId },
         });
-        isLiked = !!like;
-      }
+        let isLiked = false;
+        if (user) {
+          const like = await this.prisma.carpetLike.findUnique({
+            where: {
+              userId_carpetId: { userId: user.id, carpetId: carpet.id },
+            },
+          });
+          isLiked = !!like;
+        }
 
-      const inlineKeyboard = {
-        inline_keyboard: [
-          [
-            {
-              text: '🛒 Sotib olish',
-              url: `https://yecmarket.uz/carpets/${carpet.id}`,
-            },
-            {
-              text: isLiked ? '❤️ Saqlangan' : '🖤 Saqlash',
-              callback_data: `like_toggle_${carpet.id}`,
-            },
+        const inlineKeyboard = {
+          inline_keyboard: [
+            [
+              {
+                text: '🛒 Sotib olish',
+                url: `https://yecmarket.uz/carpets/${carpet.id}`,
+              },
+              {
+                text: isLiked ? '❤️ Saqlangan' : '🖤 Saqlash',
+                callback_data: `like_toggle_${carpet.id}`,
+              },
+            ],
+            [
+              {
+                text: '📤 Ulashish',
+                url: `https://t.me/share/url?url=https://yecmarket.uz/carpets/${carpet.id}&text=${encodeURIComponent('YEC Marketda ajoyib gilam topdim: ' + carpet.name)}`,
+              },
+              {
+                text: "🔍 O'xshashlar",
+                callback_data: `similar_search_${carpet.id}`,
+              },
+            ],
+            [{ text: '📞 Operator', url: 'https://t.me/Saloxiddin_977' }],
           ],
-          [
-            {
-              text: '📤 Ulashish',
-              url: `https://t.me/share/url?url=https://yecmarket.uz/carpets/${carpet.id}&text=${encodeURIComponent('YEC Marketda ajoyib gilam topdim: ' + carpet.name)}`,
-            },
-            {
-              text: "🔍 O'xshashlar",
-              callback_data: `similar_search_${carpet.id}`,
-            },
-          ],
-          [{ text: '📞 Operator', url: 'https://t.me/Saloxiddin_977' }],
-        ],
-      };
+        };
 
-      const image = carpet.images?.[0]?.trim() || '';
-      const photoInput = this.resolveCarpetPhoto(image);
-      if (photoInput) {
-        await this.telegramService.sendPhoto(
-          chatId,
-          photoInput,
-          textMsg,
-          inlineKeyboard,
+        const image = carpet.images?.[0]?.trim() || '';
+        const photoInput = this.resolveCarpetPhoto(image);
+        if (photoInput) {
+          await this.telegramService.sendPhoto(
+            chatId,
+            photoInput,
+            textMsg,
+            inlineKeyboard,
+          );
+        } else {
+          await this.telegramService.sendMessageSafe(
+            chatId,
+            textMsg,
+            inlineKeyboard,
+          );
+        }
+      } catch (itemErr: any) {
+        this.logger.error(
+          `Error displaying carpet ${carpet?.id}: ${itemErr?.message || itemErr}`,
         );
-      } else {
-        await ctx.reply(textMsg, {
-          parse_mode: 'HTML',
-          reply_markup: inlineKeyboard,
-        });
       }
     }
 

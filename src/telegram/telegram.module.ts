@@ -33,9 +33,11 @@ import { AiModule } from '../ai/ai.module';
           };
         }
 
+        // Managed launch: always false here so TelegramService can handle lifecycle,
+        // retry on 409 Conflict during rolling deploys, and shutdown gracefully.
         return {
           token,
-          launchOptions: allowLaunch ? {} : false,
+          launchOptions: false,
         };
       },
       inject: [ConfigService],
