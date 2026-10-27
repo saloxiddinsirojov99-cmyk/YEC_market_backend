@@ -3489,6 +3489,23 @@ export class TelegramUpdate {
     const normalized = trimmed.replace(/\\/g, '/');
     const withoutLeading = normalized.replace(/^\/+/, '');
 
+    // Helper: pick first HTTPS (non-localhost) URL from a comma-separated list.
+    const pickPublicUrl = (raw: string | undefined): string | null => {
+      if (!raw) return null;
+      const candidates = raw.split(',').map((u) => u.trim()).filter(Boolean);
+      for (const u of candidates) {
+        if (/^https:\/\//i.test(u) && !/localhost|127\.0\.0\.1/i.test(u)) {
+          return u.replace(/\/+$/, '');
+        }
+      }
+      for (const u of candidates) {
+        if (!/localhost|127\.0\.0\.1/i.test(u)) {
+          return u.replace(/\/+$/, '');
+        }
+      }
+      return null;
+    };
+
     if (withoutLeading.startsWith('images/')) {
       // 1. Try local front/public directory (only useful when running alongside frontend)
       const local = this.resolveFrontPublicAsset(withoutLeading);
@@ -3499,25 +3516,6 @@ export class TelegramUpdate {
       if (existsSync(backendLocal)) return { source: backendLocal };
 
       // 3. Resolve a publicly reachable HTTP(S) URL.
-      // Helper: pick first HTTPS (non-localhost) URL from a comma-separated list.
-      const pickPublicUrl = (raw: string | undefined): string | null => {
-        if (!raw) return null;
-        const candidates = raw.split(',').map((u) => u.trim()).filter(Boolean);
-        // Prefer HTTPS non-localhost first
-        for (const u of candidates) {
-          if (/^https:\/\//i.test(u) && !/localhost|127\.0\.0\.1/i.test(u)) {
-            return u.replace(/\/+$/, '');
-          }
-        }
-        // Fall back to any non-localhost
-        for (const u of candidates) {
-          if (!/localhost|127\.0\.0\.1/i.test(u)) {
-            return u.replace(/\/+$/, '');
-          }
-        }
-        return null;
-      };
-
       // FRONTEND_PUBLIC_URL — dedicated env var for public image base (highest priority)
       const publicBase =
         pickPublicUrl(process.env.FRONTEND_PUBLIC_URL) ||
@@ -3546,17 +3544,25 @@ export class TelegramUpdate {
       return { source: localPath };
     }
 
-    const appUrl = (process.env.APP_URL || process.env.BACKEND_URL)?.replace(/\/+$/, '');
-    if (appUrl) {
+    // Build public URL: backend serves /uploads/ via /api/v1/uploads route or static
+    const backendBase =
+      pickPublicUrl(process.env.BACKEND_URL) ||
+      pickPublicUrl(process.env.APP_URL);
+
+    if (backendBase) {
       if (normalized.startsWith('/')) {
-        return `${appUrl}${normalized}`;
+        return `${backendBase}${normalized}`;
       }
       if (normalized.startsWith('uploads/')) {
-        return `${appUrl}/${normalized}`;
+        return `${backendBase}/${normalized}`;
       }
-      return `${appUrl}/uploads/${normalized}`;
+      return `${backendBase}/uploads/${normalized}`;
     }
 
+    this.logger.warn(
+      `resolveCarpetPhoto: cannot build upload URL for "${withoutLeading}". ` +
+      `Set BACKEND_URL (e.g. https://yec-market-backend.onrender.com) in Render env vars.`,
+    );
     return null;
   }
 
