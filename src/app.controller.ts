@@ -40,11 +40,12 @@ export class AppController {
       databaseStatus = 'down';
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes('ECONNREFUSED')) {
-        dbErrorMsg = 'ECONNREFUSED: Server portiga ulanish rad etildi (host/port noto\'g\'ri yoki server ishlamayapti).';
+        dbErrorMsg =
+          "ECONNREFUSED: Server portiga ulanish rad etildi (host/port noto'g'ri yoki server ishlamayapti).";
       } else if (msg.includes('ENOTFOUND')) {
         dbErrorMsg = 'ENOTFOUND: Database host manzili topilmadi (DNS xatosi).';
       } else if (msg.includes('ETIMEDOUT')) {
-        dbErrorMsg = 'ETIMEDOUT: Database so\'rovi vaqti tugadi.';
+        dbErrorMsg = "ETIMEDOUT: Database so'rovi vaqti tugadi.";
       } else {
         dbErrorMsg = 'Database ulanishida xatolik yuz berdi.';
       }

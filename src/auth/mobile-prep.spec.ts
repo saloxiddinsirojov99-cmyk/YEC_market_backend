@@ -337,7 +337,9 @@ describe('Mobile Preparation Integration Tests (Stage 2)', () => {
 
     it('should handle Google network error/timeout safely without leaking internal errors', async () => {
       const originalFetch = global.fetch;
-      global.fetch = jest.fn().mockRejectedValue(new Error('Network connection timeout'));
+      global.fetch = jest
+        .fn()
+        .mockRejectedValue(new Error('Network connection timeout'));
 
       try {
         await expect(

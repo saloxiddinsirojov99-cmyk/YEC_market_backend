@@ -887,7 +887,7 @@ export class CarpetsService implements OnModuleInit {
     } else if (kind === 'roll') {
       andConditions.push({ type: 'ROLL' });
     } else if (kind === 'returned') {
-      andConditions.push({ isReturned: true });
+      andConditions.push({ type: { in: ['RETURN_ROLL', 'RETURN_READY'] } });
     } else if (kind === 'returned_roll') {
       andConditions.push({ type: 'RETURN_ROLL' });
     } else if (kind === 'returned_ready') {
@@ -895,9 +895,9 @@ export class CarpetsService implements OnModuleInit {
     } else if (kind === 'normal_roll') {
       andConditions.push({ type: 'ROLL' });
     } else if (kind === 'normal_ready') {
-      andConditions.push({ type: 'READY', isReturned: false });
+      andConditions.push({ type: 'READY' });
     } else if (kind === 'normal') {
-      andConditions.push({ isReturned: false });
+      andConditions.push({ type: { in: ['READY', 'ROLL'] } });
     } else if (kind === 'carpet') {
       andConditions.push(
         {
@@ -1284,8 +1284,14 @@ export class CarpetsService implements OnModuleInit {
     if (!carpet) return null;
     const activeItems = carpet.inventoryItems || [];
     const firstItem = activeItems[0];
-    const size = firstItem?.size || (carpet as any).size || '200x300';
-    const stock = activeItems.length || carpet.stock || 1;
+    const isRoll = carpet.type === 'ROLL' || carpet.productType === 'METRAJ';
+    const size = isRoll ? null : (firstItem?.size || (carpet as any).size || null);
+    const stock =
+      carpet.stock !== undefined && carpet.stock !== null
+        ? carpet.stock
+        : activeItems.length > 0
+          ? activeItems.length
+          : 0;
 
     return {
       ...carpet,
@@ -1848,11 +1854,6 @@ export class CarpetsService implements OnModuleInit {
     }
 
     const targetCarpets = await this.findCarpetsByCollectionKeys(keys);
-    const standardizedCount =
-      targetCarpets.length > 0
-        ? await this.standardizeCollectionPricesByAverage(targetCarpets)
-        : 0;
-
     const ids = targetCarpets.map((item) => item.id);
     const result =
       ids.length === 0
@@ -1866,7 +1867,7 @@ export class CarpetsService implements OnModuleInit {
       discountPercent,
       updatedCount: result.count,
       names: uniqueNames,
-      standardizedCount,
+      standardizedCount: 0,
     };
   }
 

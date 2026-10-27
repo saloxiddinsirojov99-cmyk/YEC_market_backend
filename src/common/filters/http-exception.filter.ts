@@ -75,11 +75,15 @@ export class HttpExceptionFilter implements ExceptionFilter {
         lower.includes('enotfound')
       ) {
         status = HttpStatus.SERVICE_UNAVAILABLE;
-        message = "Ma'lumotlar bazasiga ulanib bo'lmadi. Iltimos, birozdan so'ng qayta urinib ko'ring.";
+        message =
+          "Ma'lumotlar bazasiga ulanib bo'lmadi. Iltimos, birozdan so'ng qayta urinib ko'ring.";
       } else {
         message = this.translateMessage(exception.message);
       }
-      this.logger.error(`Error [${status}]: ${exception.message}`, exception.stack);
+      this.logger.error(
+        `Error [${status}]: ${exception.message}`,
+        exception.stack,
+      );
     } else {
       this.logger.error('Kutilmagan xatolik:', String(exception));
     }
@@ -122,13 +126,15 @@ export class HttpExceptionFilter implements ExceptionFilter {
     if (code === 'P1000') {
       return {
         status: HttpStatus.SERVICE_UNAVAILABLE,
-        message: "Ma'lumotlar bazasiga ulanishda autentifikatsiya xatosi yuz berdi.",
+        message:
+          "Ma'lumotlar bazasiga ulanishda autentifikatsiya xatosi yuz berdi.",
       };
     }
     if (code === 'P1001') {
       return {
         status: HttpStatus.SERVICE_UNAVAILABLE,
-        message: "Ma'lumotlar bazasi serveriga ulanib bo'lmadi. Server aloqasi uzilgan.",
+        message:
+          "Ma'lumotlar bazasi serveriga ulanib bo'lmadi. Server aloqasi uzilgan.",
       };
     }
     if (code === 'P1002') {
@@ -210,7 +216,8 @@ export class HttpExceptionFilter implements ExceptionFilter {
     if (code === 'P2021') {
       return {
         status: HttpStatus.INTERNAL_SERVER_ERROR,
-        message: "Ma'lumotlar jadvali topilmadi. Migratsiya talab qilinishi mumkin.",
+        message:
+          "Ma'lumotlar jadvali topilmadi. Migratsiya talab qilinishi mumkin.",
       };
     }
 

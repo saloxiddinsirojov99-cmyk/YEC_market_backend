@@ -36,7 +36,10 @@ export function cleanConnectionString(raw?: string): string {
 /**
  * Safely parses database connection parameters WITHOUT exposing secrets
  */
-export function parseSafeDbInfo(rawUrl?: string, isConnected = false): SafeDbInfo {
+export function parseSafeDbInfo(
+  rawUrl?: string,
+  isConnected = false,
+): SafeDbInfo {
   if (!rawUrl || !rawUrl.trim()) {
     return { configured: false, isConnected: false };
   }
@@ -134,7 +137,9 @@ export class PrismaService
 
   constructor(configService: ConfigService) {
     const rawUrl =
-      configService.get<string>('DATABASE_URL') || process.env.DATABASE_URL || '';
+      configService.get<string>('DATABASE_URL') ||
+      process.env.DATABASE_URL ||
+      '';
 
     if (!rawUrl) {
       throw new Error(
@@ -197,15 +202,16 @@ export class PrismaService
         // Execute real DB query to verify connection
         await this.$queryRaw`SELECT 1`;
         this.isDbConnected = true;
-        this.logger.log('Database ulanishi muvaffaqiyatli (SELECT 1 tasdiqlandi).');
+        this.logger.log(
+          'Database ulanishi muvaffaqiyatli (SELECT 1 tasdiqlandi).',
+        );
         this.isConnecting = false;
         return true;
       } catch (error) {
         attempt += 1;
         this.isDbConnected = false;
         const delay = Math.min(6000, 1200 * attempt);
-        const trace =
-          error instanceof Error ? error.message : String(error);
+        const trace = error instanceof Error ? error.message : String(error);
         this.logger.warn(
           `Database ulanishida xatolik (urinish ${attempt}/${maxAttempts}): ${trace}. ${Math.ceil(
             delay / 1000,
@@ -214,7 +220,7 @@ export class PrismaService
 
         if (attempt >= maxAttempts) {
           this.logger.error(
-            'Database ulanish urinishlari yakunlandi. Bazaga ulanib bo\'lmadi.',
+            "Database ulanish urinishlari yakunlandi. Bazaga ulanib bo'lmadi.",
           );
           break;
         }
@@ -230,7 +236,7 @@ export class PrismaService
     const success = await this.connectWithRetry();
     if (!success) {
       this.logger.warn(
-        'Ogohlantirish: Server ishga tushdi, lekin Database ulanishi muvaffaqiyatsiz. So\'rovlar 503 xatoligi qaytaradi.',
+        "Ogohlantirish: Server ishga tushdi, lekin Database ulanishi muvaffaqiyatsiz. So'rovlar 503 xatoligi qaytaradi.",
       );
     }
   }

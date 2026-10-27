@@ -3005,11 +3005,17 @@ export class TelegramUpdate {
       const carpet = item;
       const sizeDisplay = carpet.sizes?.[0]?.sizeStr || '0x0';
       const stock = carpet.sizes?.reduce((sum, s) => sum + s.stock, 0) || 1;
+      const formattedPrice = this.formatBotCarpetPrice(
+        carpet.price,
+        carpet.discountPercent,
+        carpet.type,
+        sizeDisplay !== '0x0' ? sizeDisplay : null,
+      );
 
       const msg =
         `✨ <b>${carpet.name}</b> ✨\n\n` +
         `📂 <b>Kategoriya:</b> ${carpet.categoryName || "Noma'lum"}\n` +
-        `💰 <b>Narxi:</b> ${Number(carpet.price).toLocaleString()} so'm / m²\n` +
+        `💰 <b>Narxi:</b> ${formattedPrice}\n` +
         `🧵 <b>Material:</b> ${carpet.material || "Noma'lum"}\n` +
         `📍 <b>O'lchami:</b> ${sizeDisplay}\n` +
         `📦 <b>Zaxirada:</b> ${stock} ta\n\n` +
@@ -3305,6 +3311,7 @@ export class TelegramUpdate {
 
         let sizesList = '';
         let stockCount = 0;
+        let firstSize: string | null = null;
 
         if (dbCarpet.type === 'ROLL') {
           const rolls = await this.prisma.rollInventory.findMany({
@@ -3332,12 +3339,22 @@ export class TelegramUpdate {
               )
               .join(', ') || "Noma'lum";
           stockCount = activeItems.length;
+          if (activeItems.length > 0) {
+            firstSize = `${Math.round(activeItems[0].widthMm / 10) / 100}x${Math.round(activeItems[0].lengthMm / 10) / 100}`;
+          }
         }
+
+        const formattedPrice = this.formatBotCarpetPrice(
+          Number(dbCarpet.price),
+          dbCarpet.discountPercent,
+          dbCarpet.type,
+          firstSize,
+        );
 
         const textMsg =
           `✨ <b>${res.collectionName} ${res.designCode}</b> ✨\n` +
           `🎯 <b>O'xshashlik:</b> ${res.matchPercent}%\n` +
-          `💵 Narxi: ${Number(dbCarpet.price).toLocaleString()} so'm / m²\n` +
+          `💵 <b>Narxi:</b> ${formattedPrice}\n` +
           `📏 O'lchamlari: ${sizesList}\n` +
           `📦 Qoldiq: ${stockCount} dona\n`;
 
@@ -3464,6 +3481,7 @@ export class TelegramUpdate {
     const trimmed = image.trim();
     if (!trimmed) return null;
 
+    // Already a full URL — return as-is
     if (/^https?:\/\//i.test(trimmed)) {
       return trimmed;
     }
@@ -3472,15 +3490,53 @@ export class TelegramUpdate {
     const withoutLeading = normalized.replace(/^\/+/, '');
 
     if (withoutLeading.startsWith('images/')) {
+      // 1. Try local front/public directory (only useful when running alongside frontend)
       const local = this.resolveFrontPublicAsset(withoutLeading);
       if (local) return { source: local };
-      const frontUrl = process.env.FRONTEND_URL?.replace(/\/+$/, '');
-      if (frontUrl) {
-        return `${frontUrl}/${withoutLeading}`;
+
+      // 2. Try backend's own public/ directory
+      const backendLocal = join(process.cwd(), 'public', withoutLeading);
+      if (existsSync(backendLocal)) return { source: backendLocal };
+
+      // 3. Resolve a publicly reachable HTTP(S) URL.
+      // Helper: pick first HTTPS (non-localhost) URL from a comma-separated list.
+      const pickPublicUrl = (raw: string | undefined): string | null => {
+        if (!raw) return null;
+        const candidates = raw.split(',').map((u) => u.trim()).filter(Boolean);
+        // Prefer HTTPS non-localhost first
+        for (const u of candidates) {
+          if (/^https:\/\//i.test(u) && !/localhost|127\.0\.0\.1/i.test(u)) {
+            return u.replace(/\/+$/, '');
+          }
+        }
+        // Fall back to any non-localhost
+        for (const u of candidates) {
+          if (!/localhost|127\.0\.0\.1/i.test(u)) {
+            return u.replace(/\/+$/, '');
+          }
+        }
+        return null;
+      };
+
+      // FRONTEND_PUBLIC_URL — dedicated env var for public image base (highest priority)
+      const publicBase =
+        pickPublicUrl(process.env.FRONTEND_PUBLIC_URL) ||
+        pickPublicUrl(process.env.FRONTEND_URL) ||
+        pickPublicUrl(process.env.APP_URL) ||
+        pickPublicUrl(process.env.BACKEND_URL);
+
+      if (publicBase) {
+        return `${publicBase}/${withoutLeading}`;
       }
+
+      this.logger.warn(
+        `resolveCarpetPhoto: cannot build public URL for "${withoutLeading}". ` +
+        `Set FRONTEND_PUBLIC_URL (e.g. https://yecmarket.uz) in backend .env or Render env vars.`,
+      );
       return null;
     }
 
+    // For uploads/ paths — try local file first, then backend URL
     const relativePath = withoutLeading.startsWith('uploads/')
       ? withoutLeading
       : `uploads/${withoutLeading}`;
@@ -3490,7 +3546,7 @@ export class TelegramUpdate {
       return { source: localPath };
     }
 
-    const appUrl = process.env.APP_URL?.replace(/\/+$/, '');
+    const appUrl = (process.env.APP_URL || process.env.BACKEND_URL)?.replace(/\/+$/, '');
     if (appUrl) {
       if (normalized.startsWith('/')) {
         return `${appUrl}${normalized}`;
@@ -3502,6 +3558,42 @@ export class TelegramUpdate {
     }
 
     return null;
+  }
+
+
+  private formatBotCarpetPrice(
+    price: number | string,
+    discountPercent = 0,
+    type?: string,
+    size?: string | null,
+  ): string {
+    const rawPrice = Number(price);
+    if (!Number.isFinite(rawPrice) || rawPrice <= 0) return "Kelishilgan narxda";
+
+    const isRoll = type === 'ROLL';
+    const disc = Math.min(99, Math.max(0, Number(discountPercent) || 0));
+    const finalPrice = disc > 0 ? Math.round(rawPrice * (1 - disc / 100)) : rawPrice;
+
+    if (isRoll) {
+      if (disc > 0) {
+        return `<s>${rawPrice.toLocaleString('uz-UZ')}</s> <b>${finalPrice.toLocaleString('uz-UZ')}</b> so'm / m² (-${disc}%)`;
+      }
+      return `${rawPrice.toLocaleString('uz-UZ')} so'm / m²`;
+    }
+
+    let perM2Text = '';
+    if (size) {
+      const area = this.parseAreaFromSize(size);
+      if (area && area > 0) {
+        const perM2 = Math.round(finalPrice / area);
+        perM2Text = ` [${perM2.toLocaleString('uz-UZ')} so'm / m²]`;
+      }
+    }
+
+    if (disc > 0) {
+      return `<s>${rawPrice.toLocaleString('uz-UZ')}</s> <b>${finalPrice.toLocaleString('uz-UZ')}</b> so'm${perM2Text} (-${disc}%)`;
+    }
+    return `${rawPrice.toLocaleString('uz-UZ')} so'm${perM2Text}`;
   }
 
   private getPriceRangeFromSearch(
@@ -4257,10 +4349,22 @@ export class TelegramUpdate {
         stockCount = carpet.inventoryItems.length;
       }
 
+      const firstCarpetSize =
+        carpet.inventoryItems && carpet.inventoryItems.length > 0
+          ? `${Math.round(carpet.inventoryItems[0].widthMm / 10) / 100}x${Math.round(carpet.inventoryItems[0].lengthMm / 10) / 100}`
+          : null;
+
+      const formattedPrice = this.formatBotCarpetPrice(
+        Number(carpet.price),
+        carpet.discountPercent,
+        carpet.type,
+        firstCarpetSize,
+      );
+
       const msg =
         `✨ <b>${carpet.name}</b> ✨\n\n` +
         `📂 <b>Kategoriya:</b> ${carpet.category?.name || "Noma'lum"}\n` +
-        `💰 <b>Narxi:</b> ${Number(carpet.price).toLocaleString()} so'm / m²\n` +
+        `💰 <b>Narxi:</b> ${formattedPrice}\n` +
         `📍 <b>O'lchamlari:</b> ${sizesList}\n` +
         `📦 <b>Zaxirada:</b> ${stockCount} dona\n\n` +
         `🔗 <a href="https://yecmarket.uz/carpets/${carpet.id}">Veb-saytda ko'rish</a>`;
@@ -4423,13 +4527,12 @@ export class TelegramUpdate {
             })
             .join(', ') || "Noma'lum";
 
-        let priceText = `${carpet.price.toLocaleString()} so'm / m²`;
-        if (carpet.discountPercent > 0) {
-          const discountedPrice = Math.round(
-            carpet.price * (1 - carpet.discountPercent / 100),
-          );
-          priceText = `<s>${carpet.price.toLocaleString()}</s> <b>${discountedPrice.toLocaleString()}</b> so'm / m² (-${carpet.discountPercent}%)`;
-        }
+        const priceText = this.formatBotCarpetPrice(
+          carpet.price,
+          carpet.discountPercent,
+          carpet.type,
+          carpet.sizes?.[0]?.sizeStr || null,
+        );
 
         const safeCarpetName = escapeHtml(carpet.name);
         const safeCatName = escapeHtml(carpet.categoryName || "Noma'lum");
