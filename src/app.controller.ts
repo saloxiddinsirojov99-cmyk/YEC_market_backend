@@ -1,12 +1,18 @@
-import { Controller, Get, ServiceUnavailableException } from '@nestjs/common';
+import { Controller, Get, ServiceUnavailableException, Optional } from '@nestjs/common';
 import { ApiExcludeController } from '@nestjs/swagger';
+import { ConfigService } from '@nestjs/config';
 import { Public } from './common/decorators/public.decorator';
 import { PrismaService } from './prisma/prisma.service';
+import { TelegramService } from './telegram/telegram.service';
 
 @ApiExcludeController()
 @Controller()
 export class AppController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly configService: ConfigService,
+    @Optional() private readonly telegramService?: TelegramService,
+  ) {}
 
   @Public()
   @Get()
@@ -54,11 +60,21 @@ export class AppController {
     const safeInfo = this.prisma.getSafeDbInfo();
     const isHealthy = databaseStatus === 'up';
 
+    const token = this.configService.get<string>('TELEGRAM_BOT_TOKEN');
+    const tgInfo = this.telegramService?.getHealthInfo();
+
     const payload = {
       status: isHealthy ? 'ok' : 'degraded',
       api: 'up',
       database: databaseStatus,
       dbInfo: safeInfo,
+      telegram: {
+        configured: Boolean(token && token.trim().length > 10),
+        enabled: this.configService.get<string>('TELEGRAM_ENABLED', 'true') === 'true',
+        activeMode: tgInfo?.activeMode || 'unknown',
+        webhookUrl: tgInfo?.webhookUrl || null,
+      },
+      commitSha: process.env.RENDER_GIT_COMMIT || 'local',
       ...(dbErrorMsg && !isHealthy ? { message: dbErrorMsg } : {}),
       timestamp: new Date().toISOString(),
     };

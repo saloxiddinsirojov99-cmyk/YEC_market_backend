@@ -177,6 +177,8 @@ export function setupApp(app: INestApplication): void {
       { path: 'health', method: RequestMethod.GET },
       { path: 'health/ready', method: RequestMethod.GET },
       { path: 'api/health', method: RequestMethod.GET },
+      { path: 'api/telegram/webhook', method: RequestMethod.POST },
+      { path: 'api/v1/telegram/webhook', method: RequestMethod.POST },
     ],
   });
 

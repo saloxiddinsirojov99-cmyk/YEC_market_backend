@@ -411,47 +411,76 @@ export class TelegramUpdate {
     );
   }
 
-  private async getAvailableCategoryNames(): Promise<string[]> {
+  private async getAvailableCategories(): Promise<
+    Array<{ id: string; name: string; carpetCount: number }>
+  > {
     const categories = await this.prisma.category.findMany({
       where: {
         carpets: {
           some: {
+            isArchived: false,
             inventoryItems: {
               some: { inventoryStatus: CarpetInventoryStatus.ACTIVE },
             },
           },
         },
       },
-      select: { name: true },
+      select: {
+        id: true,
+        name: true,
+        _count: {
+          select: {
+            carpets: {
+              where: {
+                isArchived: false,
+                inventoryItems: {
+                  some: { inventoryStatus: CarpetInventoryStatus.ACTIVE },
+                },
+              },
+            },
+          },
+        },
+      },
       orderBy: { name: 'asc' },
-      take: 100,
     });
 
-    return categories
-      .map((category) => (category.name || '').trim())
-      .filter(Boolean);
+    return categories.map((c) => ({
+      id: c.id,
+      name: (c.name || '').trim(),
+      carpetCount: c._count.carpets,
+    }));
+  }
+
+  private async getAvailableCategoryNames(): Promise<string[]> {
+    const categories = await this.getAvailableCategories();
+    return categories.map((c) => c.name);
   }
 
   private async getAvailableNames(): Promise<string[]> {
+    // Bazadagi barcha faol inventarga ega gilamlarning unikal nomlarini olish
     const carpets = await this.prisma.carpet.findMany({
       where: {
+        isArchived: false,
         inventoryItems: {
           some: { inventoryStatus: CarpetInventoryStatus.ACTIVE },
         },
       },
       select: { name: true },
+      distinct: ['name'],
       orderBy: { name: 'asc' },
-      take: 500,
     });
 
-    const unique = new Set<string>();
+    const uniqueMap = new Map<string, string>();
     for (const carpet of carpets) {
       const name = (carpet.name || '').trim();
       if (!name) continue;
-      unique.add(name);
+      const lower = name.toLowerCase();
+      if (!uniqueMap.has(lower)) {
+        uniqueMap.set(lower, name);
+      }
     }
 
-    return Array.from(unique).sort((a, b) =>
+    return Array.from(uniqueMap.values()).sort((a, b) =>
       a.localeCompare(b, 'uz', { sensitivity: 'base' }),
     );
   }
@@ -1382,15 +1411,15 @@ export class TelegramUpdate {
     }
   }
 
-  private async handleSearchName(ctx: Context) {
+  private async handleSearchName(ctx: Context, page = 1) {
     const chatId = ctx.chat?.id.toString();
     if (!chatId) return;
 
     this.clearSearchState(chatId);
     this.searchNameState.add(chatId);
 
-    const names = await this.getAvailableNames();
-    if (names.length === 0) {
+    const allNames = await this.getAvailableNames();
+    if (allNames.length === 0) {
       await ctx.reply(
         'Hozircha gilam nomlari topilmadi.',
         await this.buildSearchKeyboard(ctx),
@@ -1399,10 +1428,70 @@ export class TelegramUpdate {
       return;
     }
 
-    await ctx.reply(
-      'Gilam nomini tanlang:',
-      this.buildBackFirstKeyboard(names, 'Gilam nomini tanlang'),
-    );
+    const pageSize = 8; // 2 columns x 4 rows
+    const totalPages = Math.ceil(allNames.length / pageSize) || 1;
+    const currentPage = Math.max(1, Math.min(page, totalPages));
+    const startIndex = (currentPage - 1) * pageSize;
+    const pageItems = allNames.slice(startIndex, startIndex + pageSize);
+
+    const inline_keyboard: any[][] = [];
+    for (let i = 0; i < pageItems.length; i += 2) {
+      const row: any[] = [
+        {
+          text: pageItems[i],
+          callback_data: `sel_name:${encodeURIComponent(pageItems[i]).slice(0, 50)}`,
+        },
+      ];
+      if (pageItems[i + 1]) {
+        row.push({
+          text: pageItems[i + 1],
+          callback_data: `sel_name:${encodeURIComponent(pageItems[i + 1]).slice(0, 50)}`,
+        });
+      }
+      inline_keyboard.push(row);
+    }
+
+    // Pagination row
+    const navRow: any[] = [];
+    if (currentPage > 1) {
+      navRow.push({
+        text: '◀️ Oldingi',
+        callback_data: `names_p:${currentPage - 1}`,
+      });
+    }
+    if (currentPage < totalPages) {
+      navRow.push({
+        text: 'Keyingi ▶️',
+        callback_data: `names_p:${currentPage + 1}`,
+      });
+    }
+    if (navRow.length > 0) {
+      inline_keyboard.push(navRow);
+    }
+
+    // Navigation row
+    inline_keyboard.push([
+      { text: '⬅️ Qidiruv menyusi', callback_data: 'nav_search_menu' },
+      { text: '🏠 Asosiy menyu', callback_data: 'nav_main_menu' },
+    ]);
+
+    const msg = `🏷 <b>Gilam nomini tanlang:</b>\nJami: <b>${allNames.length} ta</b> nom mavjud | Sahifa: <b>${currentPage}/${totalPages}</b>\n\n<i>Quyidagi tugmalardan birini bosing yoki gilam nomini yozib yuboring:</i>`;
+
+    const isCb = Boolean((ctx as any).callbackQuery);
+    if (isCb) {
+      try {
+        await ctx.editMessageText(msg, {
+          parse_mode: 'HTML',
+          reply_markup: { inline_keyboard },
+        });
+        return;
+      } catch (err: any) {}
+    }
+
+    await ctx.reply(msg, {
+      parse_mode: 'HTML',
+      reply_markup: { inline_keyboard },
+    });
   }
 
   private async handleSearchCode(ctx: Context) {
@@ -1449,27 +1538,83 @@ export class TelegramUpdate {
     );
   }
 
-  private async handleSearchCategory(ctx: Context) {
+  private async handleSearchCategory(ctx: Context, page = 1) {
     const chatId = ctx.chat?.id.toString();
     if (!chatId) return;
 
     this.clearSearchState(chatId);
-    this.searchCategoryState.add(chatId);
 
-    const categories = await this.getAvailableCategoryNames();
+    const categories = await this.getAvailableCategories();
     if (categories.length === 0) {
       await ctx.reply(
         'Hozircha turlar topilmadi.',
         await this.buildSearchKeyboard(ctx),
       );
-      this.searchCategoryState.delete(chatId);
       return;
     }
 
-    await ctx.reply(
-      'Turini tanlang:',
-      this.buildBackFirstKeyboard(categories, 'Turini tanlang'),
-    );
+    const pageSize = 8;
+    const totalPages = Math.ceil(categories.length / pageSize) || 1;
+    const currentPage = Math.max(1, Math.min(page, totalPages));
+    const startIndex = (currentPage - 1) * pageSize;
+    const pageItems = categories.slice(startIndex, startIndex + pageSize);
+
+    const inline_keyboard: any[][] = [];
+    for (let i = 0; i < pageItems.length; i += 2) {
+      const row: any[] = [
+        {
+          text: `${pageItems[i].name} (${pageItems[i].carpetCount})`,
+          callback_data: `cat_pick:${pageItems[i].id}`,
+        },
+      ];
+      if (pageItems[i + 1]) {
+        row.push({
+          text: `${pageItems[i + 1].name} (${pageItems[i + 1].carpetCount})`,
+          callback_data: `cat_pick:${pageItems[i + 1].id}`,
+        });
+      }
+      inline_keyboard.push(row);
+    }
+
+    const navRow: any[] = [];
+    if (currentPage > 1) {
+      navRow.push({
+        text: '◀️ Oldingi',
+        callback_data: `cat_p:${currentPage - 1}`,
+      });
+    }
+    if (currentPage < totalPages) {
+      navRow.push({
+        text: 'Keyingi ▶️',
+        callback_data: `cat_p:${currentPage + 1}`,
+      });
+    }
+    if (navRow.length > 0) {
+      inline_keyboard.push(navRow);
+    }
+
+    inline_keyboard.push([
+      { text: '⬅️ Qidiruv menyusi', callback_data: 'nav_search_menu' },
+      { text: '🏠 Asosiy menyu', callback_data: 'nav_main_menu' },
+    ]);
+
+    const msg = `📁 <b>Gilam turini (kategoriyasini) tanlang:</b>\nJami: <b>${categories.length} ta</b> kategoriya | Sahifa: <b>${currentPage}/${totalPages}</b>\n\n<i>Quyidagi kategoriyalardan birini tanlang:</i>`;
+
+    const isCb = Boolean((ctx as any).callbackQuery);
+    if (isCb) {
+      try {
+        await ctx.editMessageText(msg, {
+          parse_mode: 'HTML',
+          reply_markup: { inline_keyboard },
+        });
+        return;
+      } catch (err: any) {}
+    }
+
+    await ctx.reply(msg, {
+      parse_mode: 'HTML',
+      reply_markup: { inline_keyboard },
+    });
   }
 
   @On('callback_query')
@@ -1494,7 +1639,12 @@ export class TelegramUpdate {
       data.startsWith('filter_') ||
       data.startsWith('like_') ||
       data.startsWith('similar_') ||
-      data.startsWith('settings_');
+      data.startsWith('settings_') ||
+      data.startsWith('sel_name:') ||
+      data.startsWith('names_p:') ||
+      data.startsWith('cat_pick:') ||
+      data.startsWith('cat_p:') ||
+      data.startsWith('nav_');
 
     const isCustomerCallback =
       data.startsWith('user_confirm_arrival_') ||
@@ -1503,6 +1653,56 @@ export class TelegramUpdate {
 
     if (!isSeller && !isCourier && !isCustomerCallback && !isAdmin) {
       await ctx.reply("Bu amal faqat ro'yxatdan o'tgan xodimlar uchun.");
+      return;
+    }
+
+    // Handle catalog selection & navigation callbacks
+    if (data.startsWith('sel_name:')) {
+      const encoded = data.replace('sel_name:', '');
+      const name = decodeURIComponent(encoded);
+      this.clearSearchState(chatId);
+      const state = { query: name, page: 1 };
+      this.userSearchState.set(chatId, state);
+      await this.renderSearchResults(ctx, state);
+      return;
+    }
+
+    if (data.startsWith('names_p:')) {
+      const p = parseInt(data.replace('names_p:', ''), 10) || 1;
+      await this.handleSearchName(ctx, p);
+      return;
+    }
+
+    if (data.startsWith('cat_pick:')) {
+      const catId = data.replace('cat_pick:', '');
+      this.clearSearchState(chatId);
+      const state = { query: '', categoryId: catId, page: 1 };
+      this.userSearchState.set(chatId, state);
+      await this.renderSearchResults(ctx, state);
+      return;
+    }
+
+    if (data.startsWith('cat_p:')) {
+      const p = parseInt(data.replace('cat_p:', ''), 10) || 1;
+      await this.handleSearchCategory(ctx, p);
+      return;
+    }
+
+    if (data === 'nav_search_menu') {
+      this.clearSearchState(chatId);
+      await this.showSearchMenu(ctx);
+      return;
+    }
+
+    if (data === 'nav_main_menu') {
+      this.clearSearchState(chatId);
+      await this.showMainMenu(ctx);
+      return;
+    }
+
+    if (data === 'filter_back_to_results') {
+      const state = this.userSearchState.get(chatId) || { query: '', page: 1 };
+      await this.renderSearchResults(ctx, state);
       return;
     }
 

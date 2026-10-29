@@ -26,6 +26,9 @@ export class TelegramService
     private readonly configService: ConfigService,
   ) {}
 
+  private activeMode: 'webhook' | 'polling' | 'disabled' = 'disabled';
+  private webhookUrl: string | null = null;
+
   async onApplicationBootstrap() {
     const token = this.configService.get<string>('TELEGRAM_BOT_TOKEN');
     const enabled =
@@ -35,11 +38,99 @@ export class TelegramService
       this.logger.warn(
         'Telegram bot faollashtirilmadi (token mavjud emas yoki TELEGRAM_ENABLED=false).',
       );
+      this.activeMode = 'disabled';
       return;
     }
 
     this.setupBotMiddlewares();
-    void this.startPollingSupervisor();
+
+    const isProduction =
+      this.configService.get<string>('NODE_ENV') === 'production';
+    const explicitMode = this.configService.get<string>('TELEGRAM_MODE');
+    const backendUrl =
+      this.configService.get<string>('BACKEND_URL') ||
+      'https://yec-market-backend.onrender.com';
+
+    // Prefer webhook on production Render environment to ensure server wake-up on updates
+    const targetMode = explicitMode || (isProduction ? 'webhook' : 'polling');
+
+    if (targetMode === 'webhook') {
+      await this.startWebhookMode(backendUrl);
+    } else {
+      this.activeMode = 'polling';
+      void this.startPollingSupervisor();
+    }
+  }
+
+  /**
+   * Returns current bot health info for status/health endpoints.
+   */
+  getHealthInfo() {
+    return {
+      activeMode: this.activeMode,
+      webhookUrl: this.webhookUrl,
+      isStopping: this.isStopping,
+      isSupervisorRunning: this.isSupervisorRunning,
+    };
+  }
+
+  /**
+   * Processes an incoming webhook update safely from TelegramWebhookController.
+   */
+  async handleWebhookUpdate(update: any, secretToken?: string) {
+    if (!update) return;
+
+    const expectedSecret = this.configService.get<string>(
+      'TELEGRAM_WEBHOOK_SECRET',
+    );
+    if (expectedSecret && secretToken && secretToken !== expectedSecret) {
+      this.logger.warn(
+        '⚠️ Telegram webhook secret token mos kelmadi, update rad etildi.',
+      );
+      return;
+    }
+
+    try {
+      await this.bot.handleUpdate(update);
+    } catch (err: any) {
+      this.logger.error(
+        `Telegram handleUpdate xatosi: ${err?.message || err}`,
+      );
+    }
+  }
+
+  private async startWebhookMode(backendUrl: string) {
+    try {
+      const cleanBase = backendUrl.trim().replace(/\/+$/, '');
+      const url = `${cleanBase}/api/v1/telegram/webhook`;
+      this.logger.log(`🌐 Telegram Webhook o'rnatilmoqda: ${url}...`);
+
+      const secretToken = this.configService.get<string>(
+        'TELEGRAM_WEBHOOK_SECRET',
+      );
+
+      await this.bot.telegram.setWebhook(url, {
+        allowed_updates: [
+          'message',
+          'edited_message',
+          'callback_query',
+          'inline_query',
+          'chosen_inline_result',
+        ],
+        drop_pending_updates: false,
+        secret_token: secretToken || undefined,
+      });
+
+      this.activeMode = 'webhook';
+      this.webhookUrl = url;
+      this.logger.log(`✅ Telegram Webhook muvaffaqiyatli faollashtirildi: ${url}`);
+    } catch (err: any) {
+      this.logger.error(
+        `❌ Telegram setWebhook muvaffaqiyatsiz bo'ldi: ${err?.message || err}. Polling rejimiga o'tilmoqda...`,
+      );
+      this.activeMode = 'polling';
+      void this.startPollingSupervisor();
+    }
   }
 
   async onModuleDestroy() {

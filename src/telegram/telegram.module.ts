@@ -3,11 +3,13 @@ import { TelegrafModule } from 'nestjs-telegraf';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TelegramUpdate } from './telegram.update';
 import { TelegramService } from './telegram.service';
+import { TelegramWebhookController } from './telegram-webhook.controller';
 import { PrismaModule } from '../prisma/prisma.module';
 import { CarpetsModule } from '../carpets/carpets.module';
 import { AiModule } from '../ai/ai.module';
 
 @Module({
+  controllers: [TelegramWebhookController],
   imports: [
     TelegrafModule.forRootAsync({
       imports: [ConfigModule],
