@@ -23,6 +23,7 @@ import { CacheModule } from './cache/cache.module';
 import { resolveUploadsDir } from './common/utils/uploads-path';
 import { HealthController } from './health/health.controller';
 import { AiModule } from './ai/ai.module';
+import { BaskoModule } from './basko/basko.module';
 
 const uploadsDir = resolveUploadsDir();
 
@@ -57,6 +58,7 @@ const uploadsDir = resolveUploadsDir();
     DeliveryModule,
     CacheModule,
     AiModule,
+    BaskoModule,
   ],
   providers: [
     {

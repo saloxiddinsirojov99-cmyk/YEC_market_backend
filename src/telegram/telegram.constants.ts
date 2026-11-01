@@ -43,10 +43,28 @@ export const TELEGRAM_BUTTONS = {
   CUSTOMER_SEND_CONTACT: '📞 Telefonni yuborish',
   CUSTOMER_BACK: '🏠 Menyuga qaytish',
 
+  // Seller dedicated menu
+  SELLER_REFRESH: '🔄 Yangilash',
+  SELLER_READY: '🏠 Tayyor gilamlar',
+  SELLER_METRAJ: '📏 Metraj gilamlar',
+  SELLER_OVAL: '🟠 Oval gilamlar',
+  SELLER_SEARCH_BARCODE: '🔎 Shtrix-kod orqali qidirish',
+  SELLER_FAVORITES: '❤️ Saralanganlar',
+
   // Common
   BACK: '🔙 Orqaga',
   CONFIRM: '✅ Tasdiqlash',
   CANCEL: '❌ Bekor qilish',
+} as const;
+
+export const SELLER_BUTTONS = {
+  REFRESH: '🔄 Yangilash',
+  READY_CARPETS: '🏠 Tayyor gilamlar',
+  METRAJ_CARPETS: '📏 Metraj gilamlar',
+  OVAL_CARPETS: '🟠 Oval gilamlar',
+  SEARCH_BARCODE: '🔎 Shtrix-kod orqali qidirish',
+  FAVORITES: '❤️ Saralanganlar',
+  BACK_MAIN: '🏠 Bosh menyu',
 } as const;
 
 /**

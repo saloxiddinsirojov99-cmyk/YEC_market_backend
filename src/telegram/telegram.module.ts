@@ -7,6 +7,8 @@ import { TelegramWebhookController } from './telegram-webhook.controller';
 import { PrismaModule } from '../prisma/prisma.module';
 import { CarpetsModule } from '../carpets/carpets.module';
 import { AiModule } from '../ai/ai.module';
+import { BaskoModule } from '../basko/basko.module';
+import { TelegramSellerService } from './telegram-seller.service';
 
 @Module({
   controllers: [TelegramWebhookController],
@@ -47,8 +49,9 @@ import { AiModule } from '../ai/ai.module';
     PrismaModule,
     CarpetsModule,
     AiModule,
+    BaskoModule,
   ],
-  providers: [TelegramUpdate, TelegramService],
-  exports: [TelegramService],
+  providers: [TelegramUpdate, TelegramService, TelegramSellerService],
+  exports: [TelegramService, TelegramSellerService],
 })
 export class TelegramModule {}

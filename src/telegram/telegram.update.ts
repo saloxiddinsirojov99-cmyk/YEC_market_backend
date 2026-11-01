@@ -14,10 +14,12 @@ import { SimilarityService } from '../ai/services/similarity.service';
 import { SearchService } from '../carpets/search.service';
 import {
   TELEGRAM_BUTTONS,
+  SELLER_BUTTONS,
   normalizeMenuText,
   escapeHtml,
   maskChatId,
 } from './telegram.constants';
+import { TelegramSellerService } from './telegram-seller.service';
 
 type CollectionCodeEntry = {
   slug: string;
@@ -119,6 +121,7 @@ export class TelegramUpdate {
     private readonly telegramService: TelegramService,
     private readonly similarityService: SimilarityService,
     private readonly searchService: SearchService,
+    private readonly telegramSellerService: TelegramSellerService,
   ) {}
 
   private getTelegramLinkSecret(): string {
@@ -190,14 +193,7 @@ export class TelegramUpdate {
   }
 
   private buildSellerKeyboard() {
-    return {
-      reply_markup: {
-        keyboard: [[{ text: this.MENU_MAIN_SEARCH }]],
-        resize_keyboard: true,
-        one_time_keyboard: false,
-        input_field_placeholder: 'Qidirish uchun nomini kiriting...',
-      },
-    };
+    return this.telegramSellerService.buildSellerKeyboard();
   }
 
   private buildCourierKeyboard() {
@@ -308,10 +304,15 @@ export class TelegramUpdate {
   }
 
   private async showSellerMenu(ctx: Context, message?: string) {
-    await ctx.reply(
-      message ?? 'Sotuvchi menyusi. Qidiruvni ishlating:',
-      this.buildSellerKeyboard(),
-    );
+    const chatId = ctx.chat?.id.toString();
+    if (chatId) {
+      await this.telegramSellerService.showSellerMainMenu(chatId, message);
+    } else {
+      await ctx.reply(
+        message ?? 'Sotuvchi menyusi. Kerakli bo‘limni tanlang:',
+        this.buildSellerKeyboard(),
+      );
+    }
   }
 
   private async showCourierMenu(ctx: Context, message?: string) {
@@ -1630,8 +1631,22 @@ export class TelegramUpdate {
       } catch {}
 
       const isSeller = await this.isSeller(ctx);
-    const isAdmin = await this.isAdmin(ctx);
-    const isCourier = await this.isCourier(ctx);
+      const isAdmin = await this.isAdmin(ctx);
+      const isCourier = await this.isCourier(ctx);
+
+      if (data.startsWith('seller_')) {
+        if (!isSeller) {
+          try {
+            await callbackCtx.answerCbQuery?.(
+              "🔒 Ushbu amal faqat do'kon sotuvchilari uchun ruxsat etilgan.",
+              { show_alert: true },
+            );
+          } catch {}
+          return;
+        }
+        const handled = await this.telegramSellerService.handleCallbackQuery(ctx);
+        if (handled) return;
+      }
 
     // Allow search/filter/like callbacks for all users
     const isSearchCallback =
@@ -2637,6 +2652,13 @@ export class TelegramUpdate {
       const isAdmin = await this.isAdmin(ctx);
       const isSeller = await this.isSeller(ctx);
       const isCourier = await this.isCourier(ctx);
+
+      // Dedicated Seller Bot flow
+      if (isSeller) {
+        const handledBySeller =
+          await this.telegramSellerService.handleSellerTextInput(chatId, text);
+        if (handledBySeller) return;
+      }
 
       // 1. Pending refund approval flow for admins
       if (isAdmin && this.pendingReturnApprovals.has(chatId)) {

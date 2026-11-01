@@ -274,6 +274,7 @@ export class TelegramService
   /**
    * Safely sends a text message with HTML parse_mode, falling back to plain text
    * if HTML parsing fails or Telegram rejects the formatting.
+   * Protects against Telegram 4096-char overflow and 429 rate limit.
    */
   async sendMessageSafe(
     chatId: string | number,
@@ -281,17 +282,42 @@ export class TelegramService
     replyMarkup?: any,
   ) {
     const id = String(chatId);
+    // Protect against Telegram 4096 character limit
+    const safeText =
+      text && text.length > 4000
+        ? `${text.slice(0, 4000)}\n\n<i>[Xabar hajmi cheklanganligi sababli qisqartirildi]</i>`
+        : text;
+
     try {
-      return await this.bot.telegram.sendMessage(id, text, {
+      return await this.bot.telegram.sendMessage(id, safeText, {
         parse_mode: 'HTML',
         reply_markup: replyMarkup,
       });
     } catch (e: any) {
+      // 429 Rate Limit Handling
+      if (e?.response?.error_code === 429 || e?.message?.includes('429')) {
+        const retryAfter = e?.response?.parameters?.retry_after || 2;
+        this.logger.warn(
+          `⏳ [Telegram 429 Rate Limit]: ${maskChatId(id)} uchun ${retryAfter} soniya kutilmoqda...`,
+        );
+        await this.delay(retryAfter * 1000);
+        try {
+          return await this.bot.telegram.sendMessage(id, safeText, {
+            parse_mode: 'HTML',
+            reply_markup: replyMarkup,
+          });
+        } catch (retryErr: any) {
+          this.logger.error(
+            `sendMessage retry after 429 failed for ${maskChatId(id)}: ${retryErr?.message}`,
+          );
+        }
+      }
+
       this.logger.warn(
         `sendMessage HTML failed for ${maskChatId(id)}: ${e?.message}. Plain text fallback...`,
       );
       try {
-        const plainText = text.replace(/<[^>]*>/g, '');
+        const plainText = safeText.replace(/<[^>]*>/g, '');
         return await this.bot.telegram.sendMessage(id, plainText, {
           reply_markup: replyMarkup,
         });
@@ -305,7 +331,7 @@ export class TelegramService
 
   /**
    * Sends photo with automatic multi-level fallback:
-   * 1. Photo + HTML caption
+   * 1. Photo + HTML caption (enforcing 1024 char limit)
    * 2. Photo + Plain text caption (if HTML formatting was rejected)
    * 3. Plain text message with HTML (if photo cannot be loaded by Telegram)
    * 4. Plain text message without HTML
@@ -316,9 +342,15 @@ export class TelegramService
     caption: string,
     reply_markup?: any,
   ) {
+    // Protect against Telegram 1024-character caption limit
+    const safeCaption =
+      caption && caption.length > 1020
+        ? `${caption.slice(0, 1015)}...`
+        : caption;
+
     try {
       await this.bot.telegram.sendPhoto(chatId, photo, {
-        caption,
+        caption: safeCaption,
         parse_mode: 'HTML',
         reply_markup,
       });
@@ -328,17 +360,53 @@ export class TelegramService
       );
       try {
         await this.bot.telegram.sendPhoto(chatId, photo, {
-          caption: caption.replace(/<[^>]*>/g, ''),
+          caption: safeCaption.replace(/<[^>]*>/g, ''),
           reply_markup,
         });
       } catch (e2: any) {
         this.logger.warn(
           `sendPhoto yuklash xatolik (${maskChatId(chatId)}): ${e2.message}. Fallback 2 (Faqat matn)...`,
         );
-        await this.sendMessageSafe(chatId, caption, reply_markup);
+        await this.sendMessageSafe(chatId, safeCaption, reply_markup);
       }
     }
   }
+
+
+  async sendMediaGroupSafe(
+    chatId: string,
+    media: Array<{
+      type: 'photo';
+      media: string | { source: string };
+      caption?: string;
+      parse_mode?: 'HTML' | 'Markdown';
+    }>,
+  ): Promise<any[]> {
+    if (!media || media.length === 0) return [];
+    try {
+      return await this.bot.telegram.sendMediaGroup(chatId, media as any);
+    } catch (e: any) {
+      this.logger.warn(
+        `sendMediaGroup xatolik (${maskChatId(chatId)}): ${e.message}. Fallback sifatida alohida yuboriladi...`,
+      );
+      const results: any[] = [];
+      for (const item of media) {
+        try {
+          const sent = await this.bot.telegram.sendPhoto(chatId, item.media as any, {
+            caption: item.caption,
+            parse_mode: item.parse_mode || 'HTML',
+          });
+          results.push(sent);
+        } catch (singleErr: any) {
+          this.logger.warn(
+            `Fallback individual photo send failed (${maskChatId(chatId)}): ${singleErr.message}`,
+          );
+        }
+      }
+      return results;
+    }
+  }
+
 
   async sendLocation(chatId: string, lat: number, lng: number) {
     try {
