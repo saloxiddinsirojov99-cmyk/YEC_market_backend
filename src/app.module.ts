@@ -25,6 +25,8 @@ import { HealthController } from './health/health.controller';
 import { AiModule } from './ai/ai.module';
 import { BaskoModule } from './basko/basko.module';
 
+import { KeepAliveService } from './health/keep-alive.service';
+
 const uploadsDir = resolveUploadsDir();
 
 @Module({
@@ -61,6 +63,7 @@ const uploadsDir = resolveUploadsDir();
     BaskoModule,
   ],
   providers: [
+    KeepAliveService,
     {
       provide: APP_GUARD,
       useClass: JwtAuthGuard,

@@ -59,22 +59,33 @@ describe('Mobile Preparation Integration Tests (Stage 2)', () => {
     });
     testUserId = testUser.id;
 
-    // Find or create a test carpet for order testing
-    let carpet = await prisma.carpet.findFirst();
-    if (!carpet) {
-      carpet = await prisma.carpet.create({
-        data: {
-          name: 'Test Carpet Spec',
-          uniqueCode: `TST-${Date.now()}`,
-          patternCode: 'PT-01',
-          productType: 'READY',
-          shape: 'RECTANGLE',
-          price: 500000,
-          material: 'Acrylic',
+    // Find or create a test carpet with active inventory for order testing
+    let carpet = await prisma.carpet.findFirst({
+      where: {
+        inventoryItems: {
+          some: {
+            inventoryStatus: 'ACTIVE',
+          },
         },
-      });
+      },
+    });
+    if (!carpet) {
+      carpet = await prisma.carpet.findFirst();
+      if (carpet) {
+        await prisma.inventoryItem.create({
+          data: {
+            carpetId: carpet.id,
+            barcode: `TSTINV-${Date.now()}`,
+            inventoryStatus: 'ACTIVE',
+            inventorySource: 'MANUAL',
+            size: '2x3',
+            widthMm: 2000,
+            lengthMm: 3000,
+          },
+        });
+      }
     }
-    testCarpetId = carpet.id;
+    testCarpetId = carpet?.id || '';
   });
 
   afterAll(async () => {
